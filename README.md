@@ -13,15 +13,6 @@ It enables clustering of correlated peaks, reduces dimensionality, and provides 
 
 ---
 
-## Key Features
-- **Metacell aggregation**: Stabilizes inference in sparse single-cell data  
-- **Clustering-enabled regression**: Groups correlated cis-peaks and assigns shared effect sizes  
-- **Bayesian inference**: Robust in small-sample settings with biologically meaningful priors  
-- **Biological interpretability**: Identifies peak clusters linked to cytokine-responsive genes and immune pathways  
-- **Benchmarking**: Outperforms ArchR, Signac, and SCARlink in fine-mapped eQTL enrichment (GTEx v8)  
-
----
-
 ## Install required R packages:
 ```{r}
 install.packages(c("data.table", "dplyr", "ggplot2", "GenomicRanges", "glmnet"))
