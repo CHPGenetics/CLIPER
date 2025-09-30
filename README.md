@@ -19,10 +19,8 @@ install.packages(c("data.table", "dplyr", "ggplot2", "GenomicRanges", "glmnet"))
 ```
 
 ## Prepare input data
-- Peaks: Accessible regions in chr:start-end format
-- Gene expression: Normalized counts (per metacell or cell)
-- Gene annotation: Chromosome + TSS coordinates
-- Reference SNPs (optional): for enrichment analysis
+- Peaks (X): Accessible regions in chr:start-end format
+- Gene expression (y): Normalized counts (per metacell or cell)
 
 ## Output
 - Peak–gene associations
