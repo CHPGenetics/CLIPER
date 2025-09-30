@@ -1,0 +1,16 @@
+# macOS system files
+.DS_Store
+
+# R session files
+.Rhistory
+.RData
+.Rproj.user/
+
+# Build artifacts
+*.o
+*.so
+*.dll
+*.exe
+
+# Logs
+*.log
