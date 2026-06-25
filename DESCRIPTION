@@ -4,10 +4,9 @@ Title: CLIPER Peak-to-Gene Modeling Utilities
 Version: 0.1.0
 Authors@R: c(
     person("Shiyue", "Tao", email = "sht175@pitt.edu", role = c("aut", "cre"))
-)
-Description: Package wrapper for CLIPER metacell construction, peak-to-gene
-    modeling, posterior summarization, condition comparison, and enrichment
-    helper utilities.
+    )
+Description: Package wrapper for CLIPER metacell construction, peak-to-gene modeling,
+    posterior summarization, condition comparison, and enrichment helper utilities.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
