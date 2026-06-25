@@ -24,7 +24,7 @@ cliper_install_deps()
 
 Install CLIPER package:
 
-```{r}
+```R
 if (!requireNamespace("remotes", quietly = TRUE)) {
   install.packages("remotes")
 }
