@@ -18,7 +18,7 @@ It enables clustering of correlated peaks, reduces dimensionality, and provides 
 If dependencies are missing, install common CLIPER dependencies first. This helper is intentionally not exported by the installed package; it is only for setting up the local environment before installation.
 
 ```R
-source("https://github.com/CHPGenetics/CLIPER/blob/main/R/cliper-loader.R")
+source("https://raw.githubusercontent.com/CHPGenetics/CLIPER/main/R/install-helpers.R")
 cliper_install_deps()
 ```
 
