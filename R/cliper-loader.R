@@ -89,6 +89,14 @@ aggregate_metacell_counts <- function(..., .cliper_verbose = FALSE) {
   .cliper_call("aggregate_metacell_counts", ..., .cliper_verbose = .cliper_verbose)
 }
 
+score_cells_for_downsampling <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("score_cells_for_downsampling", ..., .cliper_verbose = .cliper_verbose)
+}
+
+sample_cells_for_metacell <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("sample_cells_for_metacell", ..., .cliper_verbose = .cliper_verbose)
+}
+
 Create_Signac_CLIPER_obj <- function(..., .cliper_verbose = TRUE) {
   if (isTRUE(.cliper_verbose)) message("[CLIPER] Creating Signac CLIPER object")
   out <- .cliper_call("Create_Signac_CLIPER_obj", ..., .cliper_verbose = .cliper_verbose)
@@ -137,4 +145,60 @@ map_feature_intervals_to_assay_regions <- function(..., .cliper_verbose = FALSE)
 
 compute_region_enrichment_cisRest_externalBG <- function(..., .cliper_verbose = FALSE) {
   .cliper_call("compute_region_enrichment_cisRest_externalBG", ..., .cliper_verbose = .cliper_verbose)
+}
+
+compute_region_enrichment_cisRest_externalBG_geneMatched <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("compute_region_enrichment_cisRest_externalBG_geneMatched", ..., .cliper_verbose = .cliper_verbose)
+}
+
+summarize_trait_bootstrap_enrichment <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("summarize_trait_bootstrap_enrichment", ..., .cliper_verbose = .cliper_verbose)
+}
+
+liftover_snp_hg19_to_hg38 <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("liftover_snp_hg19_to_hg38", ..., .cliper_verbose = .cliper_verbose)
+}
+
+bind_cliper_summary <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("bind_cliper_summary", ..., .cliper_verbose = .cliper_verbose)
+}
+
+fix_chr_style <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("fix_chr_style", ..., .cliper_verbose = .cliper_verbose)
+}
+
+make_plot_region <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("make_plot_region", ..., .cliper_verbose = .cliper_verbose)
+}
+
+prepare_cliper_track <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("prepare_cliper_track", ..., .cliper_verbose = .cliper_verbose)
+}
+
+prepare_gwas_track <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("prepare_gwas_track", ..., .cliper_verbose = .cliper_verbose)
+}
+
+prepare_gene_track <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("prepare_gene_track", ..., .cliper_verbose = .cliper_verbose)
+}
+
+make_binned_coverage <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("make_binned_coverage", ..., .cliper_verbose = .cliper_verbose)
+}
+
+get_c4a_colors <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("get_c4a_colors", ..., .cliper_verbose = .cliper_verbose)
+}
+
+get_c4a_celltype_colors <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("get_c4a_celltype_colors", ..., .cliper_verbose = .cliper_verbose)
+}
+
+make_one_celltype_block <- function(..., .cliper_verbose = FALSE) {
+  .cliper_call("make_one_celltype_block", ..., .cliper_verbose = .cliper_verbose)
+}
+
+plot_cliper_p2g <- function(..., .cliper_verbose = TRUE) {
+  .cliper_call("plot_cliper_p2g", ..., .cliper_verbose = .cliper_verbose)
 }

@@ -1,14 +1,14 @@
 cliper_install_deps <- function(include_seurat_wrappers = TRUE, ask = TRUE) {
   cran <- c(
-    "clue", "cluster", "coda", "data.table", "dplyr", "FNN", "glmnet",
+    "clue", "cluster", "coda", "cols4all", "data.table", "dplyr", "FNN", "ggplot2", "glmnet",
     "MASS", "Matrix", "MCMCpack", "mclust", "Rcpp",
-    "RcppArmadillo", "remotes", "Seurat", "Signac", "stringr",
+    "RcppArmadillo", "patchwork", "remotes", "scales", "Seurat", "Signac", "stringr",
     "tibble", "tidyverse"
   )
   bioc <- c(
-    "Biostrings", "BSgenome.Hsapiens.UCSC.hg38", "DESeq2", "edgeR",
+    "BiocGenerics", "Biostrings", "BSgenome.Hsapiens.UCSC.hg38", "DESeq2", "edgeR",
     "GenomeInfoDb", "GenomicRanges", "IRanges", "S4Vectors",
-    "SummarizedExperiment"
+    "rtracklayer", "SummarizedExperiment"
   )
 
   missing_cran <- cran[!vapply(cran, requireNamespace, logical(1), quietly = TRUE)]

@@ -12,11 +12,11 @@ usage <- function() {
     "  Rscript scripts/run_cliper_chunk.R merge \\\n",
     "    --outdir cliper_chunks --merged_rds cliper_merged.rds \\\n",
     "    --summary_all_csv summary_all.csv --summary_csv cliper_summary.csv \\\n",
-    "    --select_csv cliper_select.csv --info_csv summary_info.csv\n",
+    "    --info_csv summary_info.csv\n",
     "\n",
     "Common Run_CLIPER options:\n",
-    "  --flank 500000 --p1 0.8 --K 5 --n_iter 10000 --burn_in 5000\n",
-    "  --alpha_conc 5 --tau2 5000 --rho0 0.5 --posterior_b_cutoff 0.1 --pip_cutoff 0.8\n",
+    "  --flank 500000 --p1 0.7 --K 5 --n_iter 10000 --burn_in 5000\n",
+    "  --alpha_conc 5 --tau2 5000 --rho0 0.5\n",
     "  --no_scale to disable X scaling; --scale_y to scale y after centering\n",
     sep = ""
   )
@@ -101,7 +101,6 @@ merge_results <- function(files) {
     merged[[ct]] <- list(
       summary_all = bind_or_empty(lapply(per_ct, `[[`, "summary_all")),
       cliper_summary = bind_or_empty(lapply(per_ct, `[[`, "cliper_summary")),
-      cliper_select = bind_or_empty(lapply(per_ct, `[[`, "cliper_select")),
       summary_info = bind_or_empty(lapply(per_ct, `[[`, "summary_info"))
     )
   }
@@ -149,7 +148,7 @@ if (identical(mode, "run")) {
     flank = as_num("flank", 500000),
     gene_list = genes_chunk,
     gr_anno = gr_anno,
-    p1 = as_num("p1", 0.8),
+    p1 = as_num("p1", 0.7),
     K = as_int("K", 5L),
     n_iter = as_int("n_iter", 10000L),
     burn_in = as_int("burn_in", 5000L),
@@ -159,9 +158,7 @@ if (identical(mode, "run")) {
     add_b_mu = isTRUE(opt[["add_b_mu"]]),
     scale = !isTRUE(opt[["no_scale"]]),
     scale_y = isTRUE(opt[["scale_y"]]),
-    seed = as_int("seed", 2001L) + chunk_id,
-    posterior_b_cutoff = as_num("posterior_b_cutoff", 0.1),
-    pip_cutoff = as_num("pip_cutoff", 0.8)
+    seed = as_int("seed", 2001L) + chunk_id
   )
 
   saveRDS(result, out_file)
@@ -176,7 +173,6 @@ if (identical(mode, "merge")) {
   merged_rds <- need("merged_rds")
   summary_all_csv <- opt[["summary_all_csv"]]
   summary_csv <- opt[["summary_csv"]]
-  select_csv <- opt[["select_csv"]]
   info_csv <- opt[["info_csv"]]
 
   files <- list.files(outdir, pattern = "^cliper_chunk_.*\\.rds$", full.names = TRUE)
@@ -191,7 +187,6 @@ if (identical(mode, "merge")) {
 
   all_summary_all <- bind_or_empty(lapply(merged, `[[`, "summary_all"))
   all_summary <- bind_or_empty(lapply(merged, `[[`, "cliper_summary"))
-  all_select <- bind_or_empty(lapply(merged, `[[`, "cliper_select"))
   all_info <- bind_or_empty(lapply(merged, `[[`, "summary_info"))
 
   if (!is.null(summary_all_csv)) {
@@ -201,10 +196,6 @@ if (identical(mode, "merge")) {
   if (!is.null(summary_csv)) {
     utils::write.csv(all_summary, summary_csv, row.names = FALSE)
     message("[CLIPER merge] saved: ", summary_csv)
-  }
-  if (!is.null(select_csv)) {
-    utils::write.csv(all_select, select_csv, row.names = FALSE)
-    message("[CLIPER merge] saved: ", select_csv)
   }
   if (!is.null(info_csv)) {
     utils::write.csv(all_info, info_csv, row.names = FALSE)

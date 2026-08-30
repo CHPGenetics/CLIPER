@@ -19,6 +19,10 @@ library(clue)
 library(coda)
 library(cluster)
 library(glmnet)
+library(cols4all)
+library(ggplot2)
+library(patchwork)
+library(rtracklayer)
 
 .cliper_source_dir <- local({
   frames <- sys.frames()
@@ -49,20 +53,21 @@ make_metacell_groups <- function(
     prefix = NULL,
     k = 10,
     knn_iteration = 500,
-    overlap_cutoff = 0.5,
+    overlap_cutoff = 0.3,
     seed = 1,
     balance_sizes = TRUE,
     min_size = NULL,
     max_size = NULL,
-    target_metacells = 500,
-    max_metacells = NULL,
-    min_metacells = NULL,
+    target_metacells = NULL,
+    max_metacells = 500,
+    min_metacells = 200,
     target_cells_per_metacell = 15,
     min_cells_per_metacell = 10,
     candidate_multiplier = 5,
     adaptive_k = TRUE,
-    balance_final_metacells = TRUE,
-    target_memberships_per_cell = 1.5,
+    balance_final_metacells = FALSE,
+    force_target_metacells = FALSE,
+    target_memberships_per_cell = 1.2,
     selection_method = c("coverage", "diverse"),
     allow_overlap = TRUE,
     min_coverage_warning = 0.75,
@@ -85,6 +90,9 @@ make_metacell_groups <- function(
   selection_method <- match.arg(selection_method)
   if (!is.logical(balance_final_metacells) || length(balance_final_metacells) != 1L) {
     stop("balance_final_metacells must be TRUE or FALSE.")
+  }
+  if (!is.logical(force_target_metacells) || length(force_target_metacells) != 1L) {
+    stop("force_target_metacells must be TRUE or FALSE.")
   }
   if (!is.finite(target_memberships_per_cell) || target_memberships_per_cell <= 0) {
     stop("target_memberships_per_cell must be positive.")
@@ -502,7 +510,7 @@ make_metacell_groups <- function(
     groups <- candidate_groups[keep_idx]
     kept_seed_ids <- seeds[keep_idx]
     
-    if (isTRUE(balance_final_metacells) && length(groups) < max_ct && length(candidate_groups) >= max_ct) {
+    if (isTRUE(force_target_metacells) && length(groups) < max_ct && length(candidate_groups) >= max_ct) {
       groups <- candidate_groups
     }
     
@@ -583,6 +591,7 @@ make_metacell_groups <- function(
       target_metacells = target_ct,
       max_metacells = max_ct,
       min_cells_per_metacell = min_cells_per_metacell,
+      force_target_metacells = force_target_metacells,
       n_cells = n,
       n_cells_covered = n_covered,
       cell_coverage_fraction = n_covered / n,
@@ -705,6 +714,7 @@ make_metacell_groups <- function(
     min_cells_per_metacell = min_cells_per_metacell,
     allow_overlap = allow_overlap,
     balance_final_metacells = balance_final_metacells,
+    force_target_metacells = force_target_metacells,
     target_memberships_per_cell = target_memberships_per_cell,
     selection_method = selection_method,
     overlap_threshold = vapply(results_by_ct, function(x) as.integer(x$overlap_threshold), integer(1)),
@@ -1313,22 +1323,23 @@ Create_Signac_CLIPER_obj <- function(
     ATAC = "Peaks",
     Barcodes_col = "orig.ident",
     norm_RNA = "DESeq2",
-    norm_ATAC = "Delta",
+    norm_ATAC = "GC-FQ",
     qc_cutoff_RNA = 0.1,
     qc_cutoff_ATAC = 0.05,
     celltype = "celltype",
-    target_metacells = 500,
-    max_metacells = NULL,
-    min_metacells = NULL,
+    target_metacells = NULL,
+    max_metacells = 500,
+    min_metacells = 200,
     target_cells_per_metacell = 15,
     min_cells_per_metacell = 10,
-    overlap_cutoff = 0.4,
+    overlap_cutoff = 0.3,
     k = 10,
     knn_iteration = 500,
     candidate_multiplier = 5,
     adaptive_k = TRUE,
-    balance_final_metacells = TRUE,
-    target_memberships_per_cell = 1.5,
+    balance_final_metacells = FALSE,
+    force_target_metacells = FALSE,
+    target_memberships_per_cell = 1.2,
     selection_method = c("coverage", "diverse"),
     allow_overlap = TRUE,
     min_coverage_warning = 0.75,
@@ -1439,6 +1450,7 @@ Create_Signac_CLIPER_obj <- function(
         candidate_multiplier = candidate_multiplier,
         adaptive_k = adaptive_k,
         balance_final_metacells = balance_final_metacells,
+        force_target_metacells = force_target_metacells,
         target_memberships_per_cell = target_memberships_per_cell,
         selection_method = selection_method,
         allow_overlap = allow_overlap,
@@ -1511,6 +1523,7 @@ Create_Signac_CLIPER_obj <- function(
           candidate_multiplier = candidate_multiplier,
           adaptive_k = adaptive_k,
           balance_final_metacells = balance_final_metacells,
+          force_target_metacells = force_target_metacells,
           target_memberships_per_cell = target_memberships_per_cell,
           selection_method = selection_method,
           allow_overlap = allow_overlap,
@@ -1538,18 +1551,20 @@ make_metacell_groups_from_emb <- function(
     ct_name = "celltype",
     k = 10,
     knn_iteration = 500,
-    overlap_cutoff = 0.4,
-    target_metacells = 500,
-    max_metacells = NULL,
-    min_metacells = NULL,
+    overlap_cutoff = 0.3,
+    target_metacells = NULL,
+    max_metacells = 500,
+    min_metacells = 200,
     target_cells_per_metacell = 15,
     min_cells_per_metacell = 10,
     candidate_multiplier = 5,
     adaptive_k = TRUE,
-    balance_final_metacells = TRUE,
-    target_memberships_per_cell = 1.5,
+    balance_final_metacells = FALSE,
+    force_target_metacells = FALSE,
+    target_memberships_per_cell = 1.2,
     selection_method = c("coverage", "diverse"),
     allow_overlap = TRUE,
+    seed = 1,
     verbose = FALSE
 ){
   if (!exists("determineOverlapCpp")) {
@@ -1560,10 +1575,13 @@ make_metacell_groups_from_emb <- function(
     stop("Package 'FNN' is required.")
   }
   selection_method <- match.arg(selection_method)
+  if (!is.logical(force_target_metacells) || length(force_target_metacells) != 1L) {
+    stop("force_target_metacells must be TRUE or FALSE.")
+  }
   if (!is.finite(target_memberships_per_cell) || target_memberships_per_cell <= 0) {
     stop("target_memberships_per_cell must be positive.")
   }
-  set.seed(seed <- 1)
+  set.seed(seed)
   
   if (is.null(rownames(emb)) || any(rownames(emb) == "")) {
     stop("emb must have non-empty rownames as cell names.")
@@ -1677,7 +1695,7 @@ make_metacell_groups_from_emb <- function(
   groups <- lapply(seq_len(nrow(nn_index_pruned)), function(i) unique(cell_names[nn_index_pruned[i, ]]))
   groups <- groups[vapply(groups, length, integer(1)) >= min_cells_per_metacell]
   
-  if (isTRUE(balance_final_metacells) && length(groups) < max_ct && nrow(nn_index) >= max_ct) {
+  if (isTRUE(force_target_metacells) && length(groups) < max_ct && nrow(nn_index) >= max_ct) {
     groups <- lapply(seq_len(nrow(nn_index)), function(i) unique(cell_names[nn_index[i, ]]))
     groups <- groups[vapply(groups, length, integer(1)) >= min_cells_per_metacell]
   }
@@ -1744,6 +1762,7 @@ make_metacell_groups_from_emb <- function(
     target_cells_per_metacell = target_cells_per_metacell,
     min_cells_per_metacell = min_cells_per_metacell,
     balance_final_metacells = balance_final_metacells,
+    force_target_metacells = force_target_metacells,
     target_memberships_per_cell = target_memberships_per_cell,
     selection_method = selection_method,
     allow_overlap = allow_overlap,
@@ -1760,7 +1779,13 @@ make_metacell_groups_from_emb <- function(
 
 parse_peaks <- function(peak_names) {
   
-  peak_df <- stringr::str_match(peak_names, "^(chr[^:-]+)[:\\-](\\d+)-(\\d+)$")
+  peak_names_std <- gsub("\\s+", "", as.character(peak_names))
+  peak_names_std <- sub(
+    "^(chr[^_:-]+)_([0-9]+)_([0-9]+)$",
+    "\\1-\\2-\\3",
+    peak_names_std
+  )
+  peak_df <- stringr::str_match(peak_names_std, "^(chr[^:-]+)[:\\-](\\d+)-(\\d+)$")
   
   valid_idx <- stats::complete.cases(peak_df)
   if (!any(valid_idx)) {
@@ -1769,6 +1794,15 @@ parse_peaks <- function(peak_names) {
   
   peak_df <- peak_df[valid_idx, , drop = FALSE]
   peak_names_valid <- peak_names[valid_idx]
+  invalid_chr <- is.na(peak_df[, 2]) |
+    peak_df[, 2] %in% c("chr", "chrNA", "chrNaN", "chrNULL") |
+    grepl("^chr(NA|NaN|null)$", peak_df[, 2], ignore.case = TRUE)
+  if (any(invalid_chr)) {
+    stop(
+      "Parsed peak IDs contain invalid chromosome labels such as chrNA. ",
+      "Check upstream region_id construction."
+    )
+  }
   
   start_pos <- as.numeric(peak_df[, 3])
   end_pos   <- as.numeric(peak_df[, 4])
@@ -1858,7 +1892,7 @@ get_peaks_by_gene_gr <- function(peak_names, gene_window_gr) {
 
 sourceCpp(file.path(.cliper_source_dir, "CER_PCGS.cpp"))
 CER_PCGS <- function(X, y, K, n_iter = 5000, burn_in = 1000, alpha_conc = 5,
-                     tau2 = 10000, rho0 = 1, p1 = 0.8, add_b_mu = FALSE, scale = TRUE,
+                     tau2 = 10000, rho0 = 1, p1 = 0.7, add_b_mu = FALSE, scale = TRUE,
                      scale_y = FALSE) {
   
   p <- ncol(X)
@@ -1885,7 +1919,7 @@ CER_PCGS <- function(X, y, K, n_iter = 5000, burn_in = 1000, alpha_conc = 5,
   y <- scale(y, center = TRUE, scale = scale_y)
   
   selected_idx <- seq_len(p)
-  p_cap <- ceiling(1.5 * n)
+  p_cap <- ceiling(1.2 * n)
   if (p > p_cap) {
     sds <- apply(X, 2, sd)
     nonzero <- which(sds > 0 & !is.na(sds))
@@ -1968,10 +2002,9 @@ Run_CLIPER <- function(
     flank = 500000,
     gene_list = NULL,
     gr_anno = NULL,
-    p1 = 0.8, K = 5, n_iter = 10000, burn_in = 5000, alpha_conc = 5,
+    p1 = 0.7, K = 5, n_iter = 10000, burn_in = 5000, alpha_conc = 5,
     tau2 = 5000, rho0 = 0.5,
-    add_b_mu = FALSE, scale = TRUE, scale_y = FALSE, seed = 2001,
-    posterior_b_cutoff = 0.1, pip_cutoff = 0.8
+    add_b_mu = FALSE, scale = TRUE, scale_y = FALSE, seed = 2001
 ){
   
   if (is.null(cliper_obj) || length(cliper_obj) == 0) stop("cliper_obj is NULL/empty.")
@@ -2073,7 +2106,7 @@ Run_CLIPER <- function(
           Posterior_b_sd = posterior_b_pred_sd,
           Beta_q025 = posterior_b_pred_q025,
           Beta_q975 = posterior_b_pred_q975,
-          PIP = 1 - posterior_m[, 1],
+          PPIP = 1 - posterior_m[, 1],
           stringsAsFactors = FALSE
         )
         
@@ -2089,7 +2122,7 @@ Run_CLIPER <- function(
             Posterior_b_sd = posterior_b_pred_sd[idx_non_cluster1],
             Beta_q025 = posterior_b_pred_q025[idx_non_cluster1],
             Beta_q975 = posterior_b_pred_q975[idx_non_cluster1],
-            PIP = 1 - posterior_m[idx_non_cluster1, 1],
+            PPIP = 1 - posterior_m[idx_non_cluster1, 1],
             stringsAsFactors = FALSE
           )
         }
@@ -2106,25 +2139,12 @@ Run_CLIPER <- function(
       
       summary_all <- if (length(all_list)) dplyr::bind_rows(all_list) else data.frame()
       cliper_summary <- if (length(out_list)) dplyr::bind_rows(out_list) else data.frame()
-      cliper_select <- if (nrow(cliper_summary) > 0) {
-        cliper_summary[
-          is.finite(cliper_summary$Posterior_b) &
-            is.finite(cliper_summary$PIP) &
-            abs(cliper_summary$Posterior_b) > posterior_b_cutoff &
-            cliper_summary$PIP > pip_cutoff,
-          ,
-          drop = FALSE
-        ]
-      } else {
-        data.frame()
-      }
       
       message(ct)
       
       list(
         summary_all = summary_all,
         cliper_summary = cliper_summary,
-        cliper_select = cliper_select,
         summary_info   = if (length(info_list)) dplyr::bind_rows(info_list) else data.frame()
       )
     }),
@@ -2133,7 +2153,6 @@ Run_CLIPER <- function(
   
   cliper_result
 }
-
 
 
 compare_p2g <- function(
@@ -2150,7 +2169,7 @@ compare_p2g <- function(
   pip_rule <- match.arg(pip_rule)
   decision_rule <- match.arg(decision_rule)
   
-  required_cols <- c(by, "Posterior_b", "Beta_q025", "Beta_q975", "PIP")
+  required_cols <- c(by, "Posterior_b", "Beta_q025", "Beta_q975", "PPIP")
   
   missing_1 <- setdiff(required_cols, colnames(cliper_1))
   missing_2 <- setdiff(required_cols, colnames(cliper_2))
@@ -2165,29 +2184,29 @@ compare_p2g <- function(
   x1 <- cliper_1[, required_cols, drop = FALSE]
   x2 <- cliper_2[, required_cols, drop = FALSE]
   
-  colnames(x1)[match(c("Posterior_b", "Beta_q025", "Beta_q975", "PIP"), colnames(x1))] <-
-    paste0(c("Beta_mean", "Beta_q025", "Beta_q975", "PIP"), "_", name_1)
+  colnames(x1)[match(c("Posterior_b", "Beta_q025", "Beta_q975", "PPIP"), colnames(x1))] <-
+    paste0(c("Beta_mean", "Beta_q025", "Beta_q975", "PPIP"), "_", name_1)
   
-  colnames(x2)[match(c("Posterior_b", "Beta_q025", "Beta_q975", "PIP"), colnames(x2))] <-
-    paste0(c("Beta_mean", "Beta_q025", "Beta_q975", "PIP"), "_", name_2)
+  colnames(x2)[match(c("Posterior_b", "Beta_q025", "Beta_q975", "PPIP"), colnames(x2))] <-
+    paste0(c("Beta_mean", "Beta_q025", "Beta_q975", "PPIP"), "_", name_2)
   
   out <- dplyr::inner_join(x1, x2, by = by)
   
   b1 <- out[[paste0("Beta_mean_", name_1)]]
   l1 <- out[[paste0("Beta_q025_", name_1)]]
   u1 <- out[[paste0("Beta_q975_", name_1)]]
-  p1 <- out[[paste0("PIP_", name_1)]]
+  p1 <- out[[paste0("PPIP_", name_1)]]
   
   b2 <- out[[paste0("Beta_mean_", name_2)]]
   l2 <- out[[paste0("Beta_q025_", name_2)]]
   u2 <- out[[paste0("Beta_q975_", name_2)]]
-  p2 <- out[[paste0("PIP_", name_2)]]
+  p2 <- out[[paste0("PPIP_", name_2)]]
   
   out$Delta_beta <- b1 - b2
   out$Abs_delta_beta <- abs(out$Delta_beta)
   
-  out$Delta_PIP <- p1 - p2
-  out$Abs_delta_PIP <- abs(out$Delta_PIP)
+  out$Delta_PPIP <- p1 - p2
+  out$Abs_delta_PPIP <- abs(out$Delta_PPIP)
   
   se1 <- (u1 - l1) / (2 * 1.96)
   se2 <- (u2 - l2) / (2 * 1.96)
@@ -2215,27 +2234,27 @@ compare_p2g <- function(
     )
   )
   
-  out$Max_PIP <- pmax(p1, p2)
-  out$Min_PIP <- pmin(p1, p2)
+  out$Max_PPIP <- pmax(p1, p2)
+  out$Min_PPIP <- pmin(p1, p2)
   
-  out$Pass_PIP <- if (pip_rule == "min") {
-    out$Min_PIP >= pip_cutoff
+  out$Pass_PPIP <- if (pip_rule == "min") {
+    out$Min_PPIP >= pip_cutoff
   } else {
-    out$Max_PIP >= pip_cutoff
+    out$Max_PPIP >= pip_cutoff
   }
   
   out$Pass_delta <- out$Abs_delta_beta >= delta_cutoff
   
   out$Differential <- if (decision_rule == "delta_ci") {
-    out$Pass_PIP & out$Pass_delta & out$Delta_CI_exclude0
+    out$Pass_PPIP & out$Pass_delta & out$Delta_CI_exclude0
   } else {
-    out$Pass_PIP & out$Pass_delta & !out$Beta_CI_overlap
+    out$Pass_PPIP & out$Pass_delta & !out$Beta_CI_overlap
   }
   
   out <- out[order(
     out$Differential,
     out$Abs_delta_beta,
-    out$Min_PIP,
+    out$Min_PPIP,
     decreasing = TRUE
   ), ]
   
@@ -2245,6 +2264,8 @@ compare_p2g <- function(
 }
 
 
+# Robust region ID -> GRanges
+# Accepts strings like "chr1-100-200", "chr1:100-200", "chr1_100_200", with spaces removed
 ids_to_granges_safe <- function(region_ids) {
   region_ids <- as.character(region_ids)
   
@@ -2269,6 +2290,8 @@ ids_to_granges_safe <- function(region_ids) {
   gr
 }
 
+# Generic feature intervals -> assay region IDs (label-aware)
+# Example usage: map CRISPR intervals (label=gene) to ATAC peaks; but can be used for any feature intervals
 map_feature_intervals_to_assay_regions <- function(
     obj,
     feature_df,
@@ -2330,136 +2353,2411 @@ map_feature_intervals_to_assay_regions <- function(
     dplyr::distinct()
 }
 
-compute_region_enrichment_cisRest_externalBG <- function(
-    selected_regions,
-    background_regions,
-    external_background,
-    external_targets,
-    min_overlap_bp = 1,
-    restrict_selected_to_cis = TRUE,
-    verbose = TRUE
-){
-  stopifnot(length(selected_regions) > 0,
-            length(background_regions) > 0,
-            length(external_background) > 0,
-            length(external_targets) > 0)
-  
-  SEL0   <- ids_to_granges_safe(unique(selected_regions))
-  CIS    <- ids_to_granges_safe(unique(background_regions))
-  EXT_BG <- ids_to_granges_safe(unique(external_background))
-  EXT_TG <- ids_to_granges_safe(unique(external_targets))
-  
-  if (length(SEL0) == 0) stop("selected_regions cannot be parsed to GRanges.")
-  if (length(CIS)  == 0) stop("background_regions cannot be parsed to GRanges.")
-  if (length(EXT_BG) == 0) stop("external_background cannot be parsed to GRanges.")
-  if (length(EXT_TG) == 0) stop("external_targets cannot be parsed to GRanges.")
-  
-  if (restrict_selected_to_cis) {
-    ov_sel_cis <- GenomicRanges::findOverlaps(
-      SEL0, CIS,
-      minoverlap = min_overlap_bp,
-      ignore.strand = TRUE
-    )
-    SEL <- SEL0[unique(S4Vectors::queryHits(ov_sel_cis))]
+# Enrichment
+# The cis region is constructed from gr_anno for the requested genes using
+# gene body +/- cis_flank. For a fair comparison across methods, use the same
+# genes, cis_flank, external_background, and external_targets in every call.
+
+.enrich_gr_key <- function(gr) {
+  paste0(
+    as.character(GenomicRanges::seqnames(gr)), ":",
+    BiocGenerics::start(gr), "-", BiocGenerics::end(gr)
+  )
+}
+
+.enrich_as_gr <- function(x, label, deduplicate = TRUE) {
+  if (inherits(x, "GRanges")) {
+    gr <- x
   } else {
-    SEL <- SEL0
+    if (!exists("parse_peaks", mode = "function")) {
+      stop("parse_peaks() must be defined before using ", label, ".")
+    }
+    x <- unique(as.character(x))
+    x <- x[!is.na(x) & nzchar(x)]
+    if (length(x) == 0L) stop(label, " is empty.")
+    gr <- parse_peaks(x)
   }
-  if (length(SEL) == 0) stop("No selected regions remain after restricting to cis background.")
   
-  ov_cis_sel <- GenomicRanges::findOverlaps(
-    CIS, SEL,
-    minoverlap = min_overlap_bp,
+  if (length(gr) == 0L) stop(label, " cannot be parsed to GRanges.")
+  
+  if (isTRUE(deduplicate)) {
+    gr <- gr[!duplicated(.enrich_gr_key(gr))]
+  }
+  gr
+}
+
+.enrich_as_named_gr <- function(x, label) {
+  if (inherits(x, "GRanges")) {
+    gr <- x
+    
+    if ("gene" %in% colnames(S4Vectors::mcols(gr))) {
+      gene <- as.character(S4Vectors::mcols(gr)$gene)
+    } else if (!is.null(names(gr)) && all(nzchar(names(gr)))) {
+      gene <- as.character(names(gr))
+    } else {
+      stop(
+        label,
+        " must have a 'gene' metadata column or non-empty names."
+      )
+    }
+    
+    region_id <- .enrich_gr_key(gr)
+  } else {
+    if (
+      is.null(names(x)) ||
+      any(is.na(names(x))) ||
+      any(names(x) == "")
+    ) {
+      stop(label, " must be a named character vector with names = gene.")
+    }
+    
+    gene <- as.character(names(x))
+    region_id <- as.character(x)
+    keep <- !is.na(gene) & nzchar(gene) & !is.na(region_id) & nzchar(region_id)
+    gene <- gene[keep]
+    region_id <- region_id[keep]
+    if (length(region_id) == 0L) stop(label, " is empty after filtering.")
+    
+    region_std <- gsub("\\s+", "", region_id)
+    region_std <- gsub("[:_]", "-", region_std)
+    mat <- stringr::str_match(
+      region_std,
+      "^(chr[^-]+)-([0-9]+)-([0-9]+)$"
+    )
+    ok <- !is.na(mat[, 1])
+    
+    if (any(!ok)) {
+      message(
+        "Dropping ", sum(!ok), " ", label,
+        " region IDs that cannot be parsed."
+      )
+    }
+    
+    gene <- gene[ok]
+    region_id <- region_id[ok]
+    mat <- mat[ok, , drop = FALSE]
+    if (length(region_id) == 0L) {
+      stop(label, " contains no valid genomic regions.")
+    }
+    
+    start_pos <- as.integer(mat[, 3])
+    end_pos <- as.integer(mat[, 4])
+    valid_range <- !is.na(start_pos) & !is.na(end_pos) & end_pos >= start_pos
+    
+    gene <- gene[valid_range]
+    region_id <- region_id[valid_range]
+    mat <- mat[valid_range, , drop = FALSE]
+    start_pos <- start_pos[valid_range]
+    end_pos <- end_pos[valid_range]
+    
+    if (length(region_id) == 0L) {
+      stop(label, " contains no valid genomic ranges.")
+    }
+    
+    gr <- GenomicRanges::GRanges(
+      seqnames = mat[, 2],
+      ranges = IRanges::IRanges(start = start_pos, end = end_pos)
+    )
+  }
+  
+  region_key <- .enrich_gr_key(gr)
+  pair_id <- paste(gene, region_key, sep = "||")
+  
+  S4Vectors::mcols(gr)$region_id <- region_id
+  S4Vectors::mcols(gr)$region_key <- region_key
+  S4Vectors::mcols(gr)$gene <- gene
+  S4Vectors::mcols(gr)$pair_id <- pair_id
+  
+  gr[!duplicated(pair_id)]
+}
+
+.enrich_make_cis_windows <- function(
+    gr_anno,
+    genes,
+    cis_flank,
+    gene_col = "gene_name"
+) {
+  if (!exists("make_gene_window_for_selected", mode = "function")) {
+    stop(
+      "make_gene_window_for_selected() must be defined before running ",
+      "the enrichment functions."
+    )
+  }
+  if (!inherits(gr_anno, "GRanges")) stop("gr_anno must be a GRanges.")
+  if (is.null(genes) || length(genes) == 0L) stop("genes cannot be NULL/empty.")
+  if (!is.finite(cis_flank) || length(cis_flank) != 1L || cis_flank < 0) {
+    stop("cis_flank must be one non-negative finite number.")
+  }
+  
+  genes <- unique(as.character(genes))
+  genes <- genes[!is.na(genes) & nzchar(genes)]
+  if (length(genes) == 0L) stop("No valid genes remain.")
+  
+  cis_by_gene <- make_gene_window_for_selected(
+    gr_anno = gr_anno,
+    genes = genes,
+    flank = as.integer(cis_flank),
+    gene_col = gene_col
+  )
+  
+  if (length(cis_by_gene) == 0L) stop("No cis regions were constructed.")
+  
+  if (!"gene" %in% colnames(S4Vectors::mcols(cis_by_gene))) {
+    if (!is.null(names(cis_by_gene)) && all(nzchar(names(cis_by_gene)))) {
+      S4Vectors::mcols(cis_by_gene)$gene <- names(cis_by_gene)
+    } else {
+      stop("Constructed cis regions do not contain gene labels.")
+    }
+  }
+  
+  cis_by_gene
+}
+
+.enrich_overlap_flags <- function(query_gr, subject_gr, min_overlap_bp = 1L) {
+  out <- rep(FALSE, length(query_gr))
+  if (length(query_gr) == 0L || length(subject_gr) == 0L) return(out)
+  
+  hits <- GenomicRanges::findOverlaps(
+    query_gr,
+    subject_gr,
+    minoverlap = as.integer(min_overlap_bp),
     ignore.strand = TRUE
   )
-  REST <- CIS[setdiff(seq_along(CIS), unique(S4Vectors::queryHits(ov_cis_sel)))]
-  if (length(REST) == 0) stop("REST is empty after removing selected overlaps from cis background.")
+  if (length(hits) > 0L) {
+    out[unique(S4Vectors::queryHits(hits))] <- TRUE
+  }
+  out
+}
+
+.enrich_pair_overlap_flags <- function(query_gr, subject_gr, min_overlap_bp = 1L) {
+  out <- rep(FALSE, length(query_gr))
+  if (length(query_gr) == 0L || length(subject_gr) == 0L) return(out)
   
-  count_unique_queries_overlapping <- function(X, Y) {
-    if (length(X) == 0 || length(Y) == 0) return(0L)
-    hits <- GenomicRanges::findOverlaps(
-      X, Y,
-      minoverlap = min_overlap_bp,
-      ignore.strand = TRUE
-    )
-    length(unique(S4Vectors::queryHits(hits)))
+  hits <- GenomicRanges::findOverlaps(
+    query_gr,
+    subject_gr,
+    minoverlap = as.integer(min_overlap_bp),
+    ignore.strand = TRUE
+  )
+  if (length(hits) == 0L) return(out)
+  
+  q_gene <- as.character(
+    S4Vectors::mcols(query_gr)$gene[S4Vectors::queryHits(hits)]
+  )
+  s_gene <- as.character(
+    S4Vectors::mcols(subject_gr)$gene[S4Vectors::subjectHits(hits)]
+  )
+  hits <- hits[q_gene == s_gene]
+  
+  if (length(hits) > 0L) {
+    out[unique(S4Vectors::queryHits(hits))] <- TRUE
+  }
+  out
+}
+
+.enrich_target_flags <- function(
+    query_gr,
+    target_gr,
+    match = c("exact", "overlap"),
+    min_overlap_bp = 1L,
+    gene_matched = FALSE
+) {
+  match <- match.arg(match)
+  
+  if (match == "exact") {
+    if (isTRUE(gene_matched)) {
+      return(
+        S4Vectors::mcols(query_gr)$pair_id %in%
+          S4Vectors::mcols(target_gr)$pair_id
+      )
+    }
+    return(.enrich_gr_key(query_gr) %in% .enrich_gr_key(target_gr))
   }
   
-  K_selected <- count_unique_queries_overlapping(SEL,  EXT_BG)
-  G_selected <- count_unique_queries_overlapping(SEL,  EXT_TG)
-  K_rest     <- count_unique_queries_overlapping(REST, EXT_BG)
-  G_rest     <- count_unique_queries_overlapping(REST, EXT_TG)
+  if (isTRUE(gene_matched)) {
+    .enrich_pair_overlap_flags(query_gr, target_gr, min_overlap_bp)
+  } else {
+    .enrich_overlap_flags(query_gr, target_gr, min_overlap_bp)
+  }
+}
+
+.enrich_safe_ratio <- function(num, den) {
+  if (
+    length(num) != 1L || length(den) != 1L ||
+    !is.finite(num) || !is.finite(den) || den <= 0
+  ) {
+    return(NA_real_)
+  }
+  num / den
+}
+
+.enrich_safe_enrichment <- function(
+    G_selected,
+    K_selected,
+    G_background,
+    K_background
+) {
+  p_selected <- .enrich_safe_ratio(G_selected, K_selected)
+  p_background <- .enrich_safe_ratio(G_background, K_background)
   
-  prec_selected <- if (K_selected > 0) G_selected / K_selected else NA_real_
-  prec_rest     <- if (K_rest > 0)     G_rest     / K_rest     else NA_real_
-  
-  enrichment <- if (is.finite(prec_selected) &&
-                    is.finite(prec_rest) &&
-                    prec_rest > 0) {
-    prec_selected / prec_rest
+  if (is.finite(p_selected) && is.finite(p_background) && p_background > 0) {
+    p_selected / p_background
   } else {
     NA_real_
   }
-  
-  fisher_p <- NA_real_
-  odds_ratio <- NA_real_
-  or_ci_lower <- NA_real_
-  or_ci_upper <- NA_real_
-  
-  if (!any(is.na(c(K_selected, G_selected, K_rest, G_rest))) &&
-      K_selected >= G_selected && K_rest >= G_rest &&
-      K_selected > 0 && K_rest > 0) {
-    
-    mat <- matrix(
-      c(G_selected, G_rest,
-        K_selected - G_selected, K_rest - G_rest),
-      nrow = 2,
-      byrow = TRUE
+}
+
+summarize_trait_bootstrap_enrichment <- function(
+    dt,
+    group_cols,
+    trait_col = "Phenotype",
+    value_col = "enrichment",
+    n_boot = 1000L,
+    conf_level = 0.95,
+    seed = 1L,
+    min_traits = 2L,
+    status_col = "status",
+    ok_status = "ok"
+) {
+  if (!requireNamespace("data.table", quietly = TRUE)) {
+    stop("Package data.table is required.")
+  }
+  if (is.null(dt) || nrow(dt) == 0L) {
+    return(data.table::data.table())
+  }
+  x <- data.table::as.data.table(dt)
+  required_cols <- unique(c(group_cols, trait_col, value_col))
+  missing_cols <- setdiff(required_cols, colnames(x))
+  if (length(missing_cols) > 0L) {
+    stop("Missing required columns: ", paste(missing_cols, collapse = ", "))
+  }
+  if (!is.null(status_col) && status_col %in% colnames(x)) {
+    x <- x[get(status_col) == ok_status]
+  }
+  x[, (value_col) := suppressWarnings(as.numeric(get(value_col)))]
+  x <- x[!is.na(get(trait_col)) & nzchar(as.character(get(trait_col))) &
+           is.finite(get(value_col))]
+  if (nrow(x) == 0L) return(data.table::data.table())
+
+  by_cols <- unique(c(group_cols, trait_col))
+  trait_dt <- x[
+    ,
+    .(
+      trait_enrichment = mean(get(value_col), na.rm = TRUE),
+      n_rows_per_trait = .N
+    ),
+    by = by_cols
+  ]
+
+  alpha <- (1 - conf_level) / 2
+  old_seed <- if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+    get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  } else {
+    NULL
+  }
+  on.exit({
+    if (is.null(old_seed)) {
+      if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+        rm(".Random.seed", envir = .GlobalEnv)
+      }
+    } else {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    }
+  }, add = TRUE)
+  set.seed(seed)
+
+  trait_dt[
+    ,
+    {
+      values <- trait_enrichment[is.finite(trait_enrichment)]
+      n_traits <- length(values)
+      if (n_traits >= min_traits && n_boot > 0L) {
+        boot <- replicate(
+          as.integer(n_boot),
+          mean(sample(values, size = n_traits, replace = TRUE)),
+          simplify = TRUE
+        )
+        ci_low <- unname(stats::quantile(boot, probs = alpha, na.rm = TRUE, names = FALSE))
+        ci_high <- unname(stats::quantile(boot, probs = 1 - alpha, na.rm = TRUE, names = FALSE))
+      } else {
+        ci_low <- NA_real_
+        ci_high <- NA_real_
+      }
+      .(
+        n_traits = n_traits,
+        n_input_rows = sum(n_rows_per_trait),
+        mean_enrichment = mean(values, na.rm = TRUE),
+        median_enrichment = stats::median(values, na.rm = TRUE),
+        sd_enrichment = stats::sd(values, na.rm = TRUE),
+        se_enrichment = stats::sd(values, na.rm = TRUE) / sqrt(n_traits),
+        bootstrap_ci_low = ci_low,
+        bootstrap_ci_high = ci_high,
+        bootstrap_n = as.integer(n_boot),
+        bootstrap_conf_level = conf_level,
+        bootstrap_unit = trait_col,
+        bootstrap_weighting = "equal_trait"
+      )
+    },
+    by = group_cols
+  ]
+}
+
+.enrich_fisher_selected_vs_rest <- function(
+    G_selected,
+    K_selected,
+    G_rest,
+    K_rest,
+    alternative = "greater",
+    conf_level = 0.95,
+    target_label = "external_target"
+) {
+  mat <- matrix(
+    c(
+      G_selected, K_selected - G_selected,
+      G_rest, K_rest - G_rest
+    ),
+    nrow = 2L,
+    byrow = TRUE,
+    dimnames = list(
+      c("selected", "cis_rest"),
+      c(target_label, paste0("non_", target_label))
     )
-    
-    ft <- suppressWarnings(stats::fisher.test(mat, alternative = "two.sided"))
-    fisher_p <- ft$p.value
-    odds_ratio <- unname(ft$estimate)
-    or_ci_lower <- unname(ft$conf.int[1])
-    or_ci_upper <- unname(ft$conf.int[2])
+  )
+  
+  out <- list(
+    odds_ratio = NA_real_,
+    or_ci_lower = NA_real_,
+    or_ci_upper = NA_real_,
+    p_value = NA_real_,
+    alternative = alternative,
+    conf_level = conf_level,
+    table = mat
+  )
+  
+  if (
+    K_selected > 0L && K_rest > 0L &&
+    G_selected >= 0L && G_selected <= K_selected &&
+    G_rest >= 0L && G_rest <= K_rest
+  ) {
+    ft <- suppressWarnings(
+      stats::fisher.test(
+        mat,
+        alternative = alternative,
+        conf.level = conf_level
+      )
+    )
+    out$odds_ratio <- unname(ft$estimate)
+    out$or_ci_lower <- unname(ft$conf.int[1])
+    out$or_ci_upper <- unname(ft$conf.int[2])
+    out$p_value <- ft$p.value
+  }
+  
+  out
+}
+
+
+## Variant-level enrichment without target-gene matching
+##    Examples: GWAS variants
+# -----------------------------------------------------------------------------
+compute_region_enrichment_cisRest_externalBG <- function(
+    selected_regions,
+    external_background,
+    external_targets,
+    gr_anno,
+    genes = NULL,
+    cis_flank = 500000,
+    gene_col = "gene_name",
+    min_overlap_bp = 1,
+    restrict_selected_to_cis = TRUE,
+    target_match = c("exact", "overlap"),
+    fisher_alternative = c("two.sided", "greater", "less"),
+    conf_level = 0.95,
+    verbose = TRUE,
+    return_variant_tables = FALSE,
+    return_cis_regions = FALSE
+) {
+  target_match <- match.arg(target_match)
+  fisher_alternative <- match.arg(fisher_alternative)
+  
+  if (length(selected_regions) == 0L) stop("selected_regions is empty.")
+  if (length(external_background) == 0L) stop("external_background is empty.")
+  if (length(external_targets) == 0L) stop("external_targets is empty.")
+  if (!is.finite(min_overlap_bp) || min_overlap_bp < 1L) {
+    stop("min_overlap_bp must be at least 1.")
+  }
+  if (!is.finite(conf_level) || conf_level <= 0 || conf_level >= 1) {
+    stop("conf_level must be between 0 and 1.")
+  }
+  
+  if (is.null(genes)) {
+    selected_names <- names(selected_regions)
+    selected_names <- selected_names[!is.na(selected_names) & nzchar(selected_names)]
+    if (length(selected_names) == 0L) {
+      stop(
+        "Provide genes explicitly. They are required to construct the cis ",
+        "background when selected_regions is not named by gene."
+      )
+    }
+    genes <- unique(selected_names)
+    warning(
+      "genes was inferred from names(selected_regions). For comparisons across ",
+      "methods, explicitly provide the same genes in every call."
+    )
+  }
+  
+  cis_by_gene <- .enrich_make_cis_windows(
+    gr_anno = gr_anno,
+    genes = genes,
+    cis_flank = cis_flank,
+    gene_col = gene_col
+  )
+  cis_union <- GenomicRanges::reduce(cis_by_gene, ignore.strand = TRUE)
+  
+  SEL0 <- .enrich_as_gr(selected_regions, "selected_regions")
+  EXT_BG <- .enrich_as_gr(external_background, "external_background")
+  EXT_TG <- .enrich_as_gr(external_targets, "external_targets")
+  
+  selected_in_cis <- .enrich_overlap_flags(SEL0, cis_union, min_overlap_bp)
+  SEL <- if (isTRUE(restrict_selected_to_cis)) {
+    SEL0[selected_in_cis]
+  } else {
+    SEL0
+  }
+  if (length(SEL) == 0L) {
+    stop("No selected regions overlap the constructed cis regions.")
+  }
+  
+  # Eligible variants are restricted to the union of the requested cis regions.
+  # A variant is counted once even if several gene windows overlap it.
+  in_cis <- .enrich_overlap_flags(EXT_BG, cis_union, min_overlap_bp)
+  CIS_VARIANTS <- EXT_BG[in_cis]
+  if (length(CIS_VARIANTS) == 0L) {
+    stop("No external_background variants overlap the constructed cis regions.")
+  }
+  
+  is_selected <- .enrich_overlap_flags(CIS_VARIANTS, SEL, min_overlap_bp)
+  is_target <- .enrich_target_flags(
+    query_gr = CIS_VARIANTS,
+    target_gr = EXT_TG,
+    match = target_match,
+    min_overlap_bp = min_overlap_bp,
+    gene_matched = FALSE
+  )
+  is_rest <- !is_selected
+  
+  K_selected <- sum(is_selected)
+  G_selected <- sum(is_selected & is_target)
+  K_background <- length(CIS_VARIANTS)
+  G_background <- sum(is_target)
+  K_rest <- sum(is_rest)
+  G_rest <- sum(is_rest & is_target)
+  
+  density_selected <- .enrich_safe_ratio(G_selected, K_selected)
+  density_background <- .enrich_safe_ratio(G_background, K_background)
+  density_rest <- .enrich_safe_ratio(G_rest, K_rest)
+  enrichment <- .enrich_safe_enrichment(
+    G_selected,
+    K_selected,
+    G_background,
+    K_background
+  )
+  
+  fisher <- .enrich_fisher_selected_vs_rest(
+    G_selected = G_selected,
+    K_selected = K_selected,
+    G_rest = G_rest,
+    K_rest = K_rest,
+    alternative = fisher_alternative,
+    conf_level = conf_level,
+    target_label = "external_target"
+  )
+  fisher$inference_note <- paste(
+    "Fisher's exact test compares selected variants with the non-overlapping",
+    "cis-rest variants. Its odds ratio is distinct from the main enrichment",
+    "estimate, whose denominator is the full cis region."
+  )
+  
+  if (K_selected == 0L) {
+    warning("No eligible external-background variants overlap selected_regions.")
+  }
+  if (G_background == 0L) {
+    warning("No external targets were found in the full cis background.")
   }
   
   if (verbose) {
-    message("Selected regions: ", length(SEL), " | Rest regions: ", length(REST))
-    message("K_selected (SEL~EXT_BG): ", K_selected,
-            " | G_selected (SEL~EXT_TG): ", G_selected,
-            " | G_selected/K_selected=", signif(prec_selected, 4))
-    message("K_rest (REST~EXT_BG): ", K_rest,
-            " | G_rest (REST~EXT_TG): ", G_rest,
-            " | G_rest/K_rest=", signif(prec_rest, 4))
-    message("Enrichment = (G_selected/K_selected)/(G_rest/K_rest) = ", signif(enrichment, 4))
-    message("Fisher OR=", signif(odds_ratio, 4),
-            " | 95% CI [", signif(or_ci_lower, 4), ", ", signif(or_ci_upper, 4), "]",
-            " | p=", signif(fisher_p, 4))
+    message("Variant enrichment using the full cis-region background")
+    message(
+      "Genes: ", length(unique(as.character(genes))),
+      " | cis flank: ", format(cis_flank, big.mark = ","), " bp"
+    )
+    message(
+      "Selected regions in cis: ", length(SEL),
+      " | eligible cis variants: ", K_background
+    )
+    message(
+      "Selected density: ", G_selected, "/", K_selected,
+      " = ", signif(density_selected, 4)
+    )
+    message(
+      "Full cis density: ", G_background, "/", K_background,
+      " = ", signif(density_background, 4)
+    )
+    message("Enrichment: ", signif(enrichment, 4))
+    message(
+      "Fisher selected-vs-cis-rest OR: ", signif(fisher$odds_ratio, 4),
+      " | p = ", signif(fisher$p_value, 4)
+    )
   }
   
-  list(
+  out <- list(
     counts = list(
-      selected_n = length(SEL),
-      rest_n = length(REST),
+      genes_requested = length(unique(as.character(genes))),
+      genes_with_cis_region = length(unique(S4Vectors::mcols(cis_by_gene)$gene)),
+      selected_region_n = length(SEL),
+      cis_region_n_before_union = length(cis_by_gene),
+      cis_region_n_after_union = length(cis_union),
       K_selected = K_selected,
       G_selected = G_selected,
-      K_rest = K_rest,
-      G_rest = G_rest
+      K_background = K_background,
+      G_background = G_background,
+      K_cis_rest = K_rest,
+      G_cis_rest = G_rest
     ),
-    precision = list(
-      selected = prec_selected,
-      rest = prec_rest
+    density = list(
+      selected = density_selected,
+      cis_background = density_background,
+      cis_rest = density_rest
     ),
     enrichment = enrichment,
-    fisher = list(
-      odds_ratio = odds_ratio,
-      or_ci_lower = or_ci_lower,
-      or_ci_upper = or_ci_upper,
-      p_value = fisher_p
+    risk_ratio = list(
+      estimate = enrichment,
+      definition = paste(
+        "target-variant density in selected regions /",
+        "target-variant density in the full cis-region background"
+      )
     ),
+    fisher = fisher,
     settings = list(
-      min_overlap_bp = min_overlap_bp,
-      restrict_selected_to_cis = restrict_selected_to_cis
+      cis_flank = cis_flank,
+      gene_col = gene_col,
+      selected_included_in_background_denominator = TRUE,
+      unit = "unique external-background variant",
+      target_match = target_match,
+      min_overlap_bp = min_overlap_bp
     )
   )
+  
+  if (isTRUE(return_variant_tables)) {
+    out$variant_table <- data.frame(
+      variant_id = .enrich_gr_key(CIS_VARIANTS),
+      in_selected = is_selected,
+      in_cis_rest = is_rest,
+      external_target = is_target,
+      stringsAsFactors = FALSE
+    )
+  }
+  if (isTRUE(return_cis_regions)) {
+    out$cis_regions_by_gene <- cis_by_gene
+    out$cis_regions_union <- cis_union
+  }
+  
+  out
+}
+
+
+## Region-gene-pair enrichment with target-gene matching
+##    Examples: eQTL, CRISPRi, HiChIP, promoter-capture Hi-C
+# -----------------------------------------------------------------------------
+compute_region_enrichment_cisRest_externalBG_geneMatched <- function(
+    selected_regions,
+    external_background,
+    external_targets,
+    gr_anno,
+    genes = NULL,
+    cis_flank = 500000,
+    gene_col = "gene_name",
+    min_overlap_bp = 1,
+    restrict_selected_to_cis = TRUE,
+    external_target_match = c("exact", "overlap"),
+    fisher_alternative = c("two.sided", "greater", "less"),
+    conf_level = 0.95,
+    n_boot = 1000,
+    bootstrap_seed = NULL,
+    verbose = TRUE,
+    return_pair_tables = FALSE,
+    return_cis_regions = FALSE
+) {
+  external_target_match <- match.arg(external_target_match)
+  fisher_alternative <- match.arg(fisher_alternative)
+  
+  if (length(selected_regions) == 0L) stop("selected_regions is empty.")
+  if (length(external_background) == 0L) stop("external_background is empty.")
+  if (length(external_targets) == 0L) stop("external_targets is empty.")
+  if (!is.finite(min_overlap_bp) || min_overlap_bp < 1L) {
+    stop("min_overlap_bp must be at least 1.")
+  }
+  if (!is.finite(conf_level) || conf_level <= 0 || conf_level >= 1) {
+    stop("conf_level must be between 0 and 1.")
+  }
+  if (!is.finite(n_boot) || n_boot < 0) {
+    stop("n_boot must be non-negative.")
+  }
+  n_boot <- as.integer(n_boot)
+  
+  SEL0   <- .enrich_as_named_gr(selected_regions, "selected_regions")
+  EXT_BG <- .enrich_as_named_gr(external_background, "external_background")
+  EXT_TG <- .enrich_as_named_gr(external_targets, "external_targets")
+  
+  if (is.null(genes)) {
+    genes <- unique(as.character(S4Vectors::mcols(EXT_BG)$gene))
+    warning(
+      "genes was inferred from external_background. For comparisons across ",
+      "methods, explicitly provide the same genes in every call."
+    )
+  }
+  genes <- unique(as.character(genes))
+  
+  cis_by_gene <- .enrich_make_cis_windows(
+    gr_anno = gr_anno,
+    genes = genes,
+    cis_flank = cis_flank,
+    gene_col = gene_col
+  )
+  
+  # Add the metadata required by gene-matched overlap functions.
+  cis_gene <- as.character(S4Vectors::mcols(cis_by_gene)$gene)
+  cis_region_key <- .enrich_gr_key(cis_by_gene)
+  S4Vectors::mcols(cis_by_gene)$region_id <- cis_region_key
+  S4Vectors::mcols(cis_by_gene)$region_key <- cis_region_key
+  S4Vectors::mcols(cis_by_gene)$pair_id <- paste(
+    cis_gene,
+    cis_region_key,
+    sep = "||"
+  )
+  
+  selected_in_cis <- .enrich_pair_overlap_flags(
+    SEL0,
+    cis_by_gene,
+    min_overlap_bp
+  )
+  SEL <- if (isTRUE(restrict_selected_to_cis)) {
+    SEL0[selected_in_cis]
+  } else {
+    SEL0
+  }
+  if (length(SEL) == 0L) {
+    stop("No selected region-gene pairs overlap their corresponding cis regions.")
+  }
+  
+  # Analysis units: eligible external region-gene pairs in the gene-specific cis regions.
+  in_cis <- .enrich_pair_overlap_flags(
+    EXT_BG,
+    cis_by_gene,
+    min_overlap_bp
+  )
+  UNITS <- EXT_BG[in_cis]
+  if (length(UNITS) == 0L) {
+    stop(
+      "No external_background region-gene pairs overlap their corresponding ",
+      "cis regions."
+    )
+  }
+  
+  # A unit is selected only if it overlaps a selected region linked to the same gene.
+  selected_flag <- .enrich_pair_overlap_flags(
+    UNITS,
+    SEL,
+    min_overlap_bp
+  )
+  
+  # A unit is a target only if it overlaps a target region linked to the same gene.
+  target_flag <- .enrich_target_flags(
+    query_gr = UNITS,
+    target_gr = EXT_TG,
+    match = external_target_match,
+    min_overlap_bp = min_overlap_bp,
+    gene_matched = TRUE
+  )
+  
+  background_flag <- rep(TRUE, length(UNITS))
+  rest_flag <- !selected_flag
+  
+  genes_in_units <- sort(unique(as.character(S4Vectors::mcols(UNITS)$gene)))
+  gene_rows <- lapply(genes_in_units, function(g) {
+    idx <- which(as.character(S4Vectors::mcols(UNITS)$gene) == g)
+    sel_idx <- idx[selected_flag[idx]]
+    rest_idx <- idx[rest_flag[idx]]
+    
+    K_selected <- length(sel_idx)
+    G_selected <- sum(target_flag[sel_idx])
+    K_background <- length(idx)
+    G_background <- sum(target_flag[idx])
+    K_rest <- length(rest_idx)
+    G_rest <- sum(target_flag[rest_idx])
+    
+    density_selected <- .enrich_safe_ratio(G_selected, K_selected)
+    density_background <- .enrich_safe_ratio(G_background, K_background)
+    density_rest <- .enrich_safe_ratio(G_rest, K_rest)
+    enrichment_gene <- .enrich_safe_enrichment(
+      G_selected,
+      K_selected,
+      G_background,
+      K_background
+    )
+    
+    data.frame(
+      gene = g,
+      K_selected = K_selected,
+      G_selected = G_selected,
+      K_background = K_background,
+      G_background = G_background,
+      K_cis_rest = K_rest,
+      G_cis_rest = G_rest,
+      density_selected = density_selected,
+      density_background = density_background,
+      density_cis_rest = density_rest,
+      enrichment_gene = enrichment_gene,
+      has_selected_background_pair = K_selected > 0,
+      has_background_target = G_background > 0,
+      valid_gene_ratio = is.finite(enrichment_gene),
+      stringsAsFactors = FALSE
+    )
+  })
+  gene_table <- do.call(rbind, gene_rows)
+  
+  K_selected <- sum(selected_flag)
+  G_selected <- sum(selected_flag & target_flag)
+  K_background <- sum(background_flag)
+  G_background <- sum(background_flag & target_flag)
+  K_rest <- sum(rest_flag)
+  G_rest <- sum(rest_flag & target_flag)
+  
+  density_selected <- .enrich_safe_ratio(G_selected, K_selected)
+  density_background <- .enrich_safe_ratio(G_background, K_background)
+  density_rest <- .enrich_safe_ratio(G_rest, K_rest)
+  
+  enrichment <- .enrich_safe_enrichment(
+    G_selected,
+    K_selected,
+    G_background,
+    K_background
+  )
+  
+  enrichment_definition <- paste(
+    "pooled selected density / pooled full cis density,",
+    "using gene-matched external-background region-gene pairs"
+  )
+  
+  fisher <- .enrich_fisher_selected_vs_rest(
+    G_selected = G_selected,
+    K_selected = K_selected,
+    G_rest = G_rest,
+    K_rest = K_rest,
+    alternative = fisher_alternative,
+    conf_level = conf_level,
+    target_label = "external_target_gene_matched"
+  )
+  fisher$inference_note <- paste(
+    "Fisher's exact test compares selected pairs with the non-overlapping",
+    "cis-rest pairs. Its odds ratio is distinct from the main enrichment",
+    "estimate, whose denominator contains all eligible cis pairs."
+  )
+  
+  bootstrap_values <- numeric(0)
+  bootstrap_ci_lower <- NA_real_
+  bootstrap_ci_upper <- NA_real_
+  bootstrap_n_valid <- 0L
+  
+  if (n_boot > 0L && nrow(gene_table) >= 2L) {
+    if (!is.null(bootstrap_seed)) set.seed(bootstrap_seed)
+    
+    bootstrap_values <- replicate(n_boot, {
+      sampled <- sample(
+        seq_len(nrow(gene_table)),
+        size = nrow(gene_table),
+        replace = TRUE
+      )
+      .enrich_safe_enrichment(
+        sum(gene_table$G_selected[sampled]),
+        sum(gene_table$K_selected[sampled]),
+        sum(gene_table$G_background[sampled]),
+        sum(gene_table$K_background[sampled])
+      )
+    })
+    
+    bootstrap_values <- bootstrap_values[is.finite(bootstrap_values)]
+    bootstrap_n_valid <- length(bootstrap_values)
+    
+    if (bootstrap_n_valid > 0L) {
+      alpha <- (1 - conf_level) / 2
+      bootstrap_ci_lower <- unname(
+        stats::quantile(bootstrap_values, probs = alpha, na.rm = TRUE)
+      )
+      bootstrap_ci_upper <- unname(
+        stats::quantile(bootstrap_values, probs = 1 - alpha, na.rm = TRUE)
+      )
+    }
+  }
+  
+  if (K_selected == 0L) {
+    warning("No eligible external-background pairs overlap selected_regions.")
+  }
+  if (G_background == 0L) {
+    warning("No external targets were found in the full cis background.")
+  }
+  
+  if (verbose) {
+    message("Gene-matched enrichment")
+    message(
+      "Genes: ", length(unique(as.character(genes))),
+      " | cis flank: ", format(cis_flank, big.mark = ","), " bp"
+    )
+    message(
+      "Selected density: ", G_selected, "/", K_selected,
+      " = ", signif(density_selected, 4)
+    )
+    message(
+      "Full cis density: ", G_background, "/", K_background,
+      " = ", signif(density_background, 4)
+    )
+    message(
+      "Enrichment = Selected density / Full cis density = ",
+      signif(enrichment, 4)
+    )
+    message(
+      "Fisher OR (selected vs cis-rest): ",
+      signif(fisher$odds_ratio, 4),
+      " | ", conf_level * 100, "% CI [",
+      signif(fisher$or_ci_lower, 4), ", ",
+      signif(fisher$or_ci_upper, 4), "]",
+      " | p = ", signif(fisher$p_value, 4),
+      " | alternative = ", fisher_alternative
+    )
+    if (bootstrap_n_valid > 0L) {
+      message(
+        conf_level * 100, "% gene-bootstrap CI for pooled enrichment [",
+        signif(bootstrap_ci_lower, 4), ", ",
+        signif(bootstrap_ci_upper, 4), "]"
+      )
+    }
+  }
+  
+  out <- list(
+    counts = list(
+      genes_requested = length(unique(as.character(genes))),
+      genes_with_cis_region = length(unique(S4Vectors::mcols(cis_by_gene)$gene)),
+      selected_region_gene_n = length(SEL),
+      external_background_pair_n_in_cis = length(UNITS),
+      K_selected = K_selected,
+      G_selected = G_selected,
+      K_background = K_background,
+      G_background = G_background,
+      K_cis_rest = K_rest,
+      G_cis_rest = G_rest,
+      genes_total = nrow(gene_table),
+      genes_with_selected_external_background_pair = sum(gene_table$has_selected_background_pair),
+      genes_with_background_target = sum(gene_table$has_background_target),
+      genes_with_finite_gene_ratio = sum(gene_table$valid_gene_ratio)
+    ),
+    density = list(
+      selected = density_selected,
+      full_cis = density_background,
+      cis_rest = density_rest,
+      selected_pooled = density_selected,
+      cis_background_pooled = density_background,
+      cis_rest_pooled = density_rest
+    ),
+    enrichment = enrichment,
+    risk_ratio = list(
+      estimate = enrichment,
+      definition = enrichment_definition,
+      bootstrap_ci_lower = bootstrap_ci_lower,
+      bootstrap_ci_upper = bootstrap_ci_upper,
+      bootstrap_n_valid = bootstrap_n_valid,
+      conf_level = conf_level
+    ),
+    fisher = fisher,
+    gene_table = gene_table,
+    settings = list(
+      cis_flank = cis_flank,
+      gene_col = gene_col,
+      selected_included_in_background_denominator = TRUE,
+      unit = "external-background region-gene pair",
+      aggregation = "pooled",
+      target_match = external_target_match,
+      min_overlap_bp = min_overlap_bp
+    )
+  )
+  
+  if (isTRUE(return_pair_tables)) {
+    out$analysis_unit_table <- data.frame(
+      gene = as.character(S4Vectors::mcols(UNITS)$gene),
+      region_id = as.character(S4Vectors::mcols(UNITS)$region_id),
+      pair_id = as.character(S4Vectors::mcols(UNITS)$pair_id),
+      in_selected = selected_flag,
+      in_cis_rest = rest_flag,
+      external_target = target_flag,
+      stringsAsFactors = FALSE
+    )
+  }
+  if (isTRUE(return_cis_regions)) {
+    out$cis_regions_by_gene <- cis_by_gene
+  }
+  
+  out
+}
+
+liftover_snp_hg19_to_hg38 <- function(
+    df,
+    chr_col,
+    pos_col,
+    chain_path = CHAIN_FILE,
+    seqlevels_style = "UCSC",
+    keep_standard = TRUE,
+    verbose = TRUE
+) {
+  stopifnot(is.data.frame(df))
+  for (nm in c(chr_col, pos_col)) {
+    if (!nm %in% colnames(df)) stop("Column not found: ", nm)
+  }
+  if (!file.exists(chain_path)) stop("chain_path not found: ", chain_path)
+  
+  dat <- df %>%
+    mutate(
+      .row_id = dplyr::row_number(),
+      .chr = as.character(.data[[chr_col]]),
+      .pos = suppressWarnings(as.integer(.data[[pos_col]]))
+    ) %>%
+    filter(!is.na(.chr), !is.na(.pos), .pos > 0)
+  
+  if (nrow(dat) == 0L) stop("No valid SNP positions after cleaning GWAS coordinates.")
+  
+  gr37 <- makeGRangesFromDataFrame(
+    dat,
+    seqnames.field = ".chr",
+    start.field = ".pos",
+    end.field = ".pos",
+    keep.extra.columns = TRUE
+  )
+  seqlevelsStyle(gr37) <- seqlevels_style
+  
+  if (keep_standard) {
+    gr37 <- keepStandardChromosomes(gr37, pruning.mode = "coarse")
+  }
+  
+  chain <- import.chain(chain_path)
+  gr38_list <- liftOver(gr37, chain)
+  n_map <- elementNROWS(gr38_list)
+  idx_unique <- which(n_map == 1L)
+  
+  gr38_unique <- unlist(gr38_list[idx_unique], use.names = FALSE)
+  genome(gr38_unique) <- "hg38"
+  
+  row_id <- mcols(gr37)$.row_id
+  df_hg38 <- as.data.table(df[row_id[idx_unique], , drop = FALSE])
+  
+  original_chr_col <- paste0(chr_col, "_GRCh37")
+  original_pos_col <- paste0(pos_col, "_GRCh37")
+  df_hg38[, (original_chr_col) := get(chr_col)]
+  df_hg38[, (original_pos_col) := get(pos_col)]
+  df_hg38[, (chr_col) := as.character(seqnames(gr38_unique))]
+  df_hg38[, (pos_col) := start(gr38_unique)]
+  
+  diagnostics <- data.table(
+    row_id = row_id,
+    chromosome_GRCh37 = as.character(seqnames(gr37)),
+    base_pair_location_GRCh37 = start(gr37),
+    n_hg38_maps = n_map,
+    liftover_status = fifelse(
+      n_map == 1L,
+      "unique",
+      fifelse(n_map == 0L, "unmapped", "multi_mapped")
+    )
+  )
+  
+  if (verbose) {
+    message(
+      paste0(
+        "Input rows: ", nrow(df), "\n",
+        "Valid SNPs used: ", length(gr37), "\n",
+        "Unique hg38 maps: ", length(idx_unique), "\n",
+        "Multi-mapped SNPs: ", sum(n_map > 1L), "\n",
+        "Unmapped SNPs: ", sum(n_map == 0L)
+      )
+    )
+  }
+  
+  list(df_hg38 = df_hg38, diagnostics = diagnostics)
+}
+
+bind_cliper_summary <- function(
+    cliper_output,
+    use = c("summary_all", "cliper_summary")
+) {
+  use <- match.arg(use)
+  
+  if (is.data.frame(cliper_output)) {
+    out <- as.data.table(cliper_output)
+    return(out)
+  }
+  
+  rbindlist(
+    lapply(names(cliper_output), function(ct) {
+      x <- cliper_output[[ct]]
+      
+      if (is.list(x) && use %in% names(x)) {
+        x <- x[[use]]
+      }
+      
+      if (!is.data.frame(x) || nrow(x) == 0) {
+        return(NULL)
+      }
+      
+      x <- as.data.table(x)
+      
+      if (!"Cell_Type" %in% colnames(x)) {
+        x[, Cell_Type := ct]
+      }
+      
+      x
+    }),
+    fill = TRUE
+  )
+}
+
+
+fix_chr_style <- function(chr, target_chr) {
+  chr <- as.character(chr)
+  target_has_chr <- grepl("^chr", as.character(target_chr))
+  
+  if (target_has_chr) {
+    paste0("chr", sub("^chr", "", chr))
+  } else {
+    sub("^chr", "", chr)
+  }
+}
+
+
+make_plot_region <- function(
+    region = NULL,
+    gene,
+    gr_anno,
+    flank = 250000,
+    gene_upstream = NULL,
+    gene_downstream = NULL,
+    gene_col = "gene_name"
+) {
+  if (is.null(region)) {
+    if (!is.null(gene_upstream) || !is.null(gene_downstream)) {
+      if (!inherits(gr_anno, "GRanges")) {
+        stop("gr_anno must be a GRanges when using gene_upstream/gene_downstream.")
+      }
+      if (!gene_col %in% colnames(S4Vectors::mcols(gr_anno))) {
+        stop("gene_col not found in gr_anno: ", gene_col)
+      }
+      
+      gene_upstream <- if (is.null(gene_upstream)) flank else as.numeric(gene_upstream)[1]
+      gene_downstream <- if (is.null(gene_downstream)) flank else as.numeric(gene_downstream)[1]
+      if (!is.finite(gene_upstream) || gene_upstream < 0) {
+        stop("gene_upstream should be a non-negative number.")
+      }
+      if (!is.finite(gene_downstream) || gene_downstream < 0) {
+        stop("gene_downstream should be a non-negative number.")
+      }
+      
+      gene_hits <- gr_anno[as.character(S4Vectors::mcols(gr_anno)[[gene_col]]) == gene]
+      if (length(gene_hits) == 0L) {
+        stop("Cannot find gene in gr_anno: ", gene)
+      }
+      
+      gene_chr <- unique(as.character(GenomicRanges::seqnames(gene_hits)))
+      if (length(gene_chr) != 1L) {
+        stop("Gene maps to multiple chromosomes in gr_anno: ", gene)
+      }
+      
+      region_start <- max(1, min(GenomicRanges::start(gene_hits), na.rm = TRUE) - gene_upstream)
+      region_end <- max(GenomicRanges::end(gene_hits), na.rm = TRUE) + gene_downstream
+      region_gr <- GenomicRanges::GRanges(
+        seqnames = gene_chr,
+        ranges = IRanges::IRanges(start = as.integer(region_start), end = as.integer(region_end))
+      )
+      names(region_gr) <- gene
+      return(region_gr)
+    }
+    
+    region_gr <- make_gene_window_for_selected(
+      gr_anno = gr_anno,
+      genes = gene,
+      flank = flank,
+      gene_col = gene_col
+    )
+    
+    region_gr <- region_gr[gene]
+    
+    if (length(region_gr) != 1L) {
+      stop("Cannot uniquely define region for gene: ", gene)
+    }
+    
+    return(region_gr)
+  }
+  
+  if (inherits(region, "GRanges")) {
+    if (length(region) != 1L) {
+      stop("region should be a single GRanges interval.")
+    }
+    return(region)
+  }
+  
+  region_gr <- ids_to_granges_safe(region)
+  
+  if (length(region_gr) != 1L) {
+    stop("region should resolve to exactly one interval.")
+  }
+  
+  region_gr
+}
+
+
+prepare_cliper_track <- function(
+    cliper_output,
+    gene,
+    region_gr,
+    use = "summary_all",
+    gene_col = "Gene",
+    peak_col = "Peak",
+    celltype_col = "Cell_Type",
+    ppip_col = "PPIP",
+    beta_col = "Posterior_b"
+) {
+  cliper_dt <- bind_cliper_summary(cliper_output, use = use)
+  
+  need <- c(gene_col, peak_col, celltype_col, ppip_col, beta_col)
+  miss <- setdiff(need, colnames(cliper_dt))
+  if (length(miss) > 0) {
+    stop("Missing columns in CLIPER output: ", paste(miss, collapse = ", "))
+  }
+  
+  cliper_dt <- as.data.table(cliper_dt)
+  cliper_dt <- cliper_dt[get(gene_col) == gene]
+  
+  if (nrow(cliper_dt) == 0) {
+    stop("No CLIPER rows found for gene: ", gene)
+  }
+  
+  # Important: parse unique peaks only, otherwise merge becomes many-to-many
+  unique_peaks <- unique(cliper_dt[[peak_col]])
+  peak_gr <- ids_to_granges_safe(unique_peaks)
+  
+  peak_dt <- data.table(
+    Peak_tmp = S4Vectors::mcols(peak_gr)$region_id,
+    peak_chr = as.character(GenomicRanges::seqnames(peak_gr)),
+    peak_start = GenomicRanges::start(peak_gr),
+    peak_end = GenomicRanges::end(peak_gr)
+  )
+  
+  setnames(peak_dt, "Peak_tmp", peak_col)
+  peak_dt <- unique(peak_dt, by = peak_col)
+  
+  # This should now be many-to-one, not many-to-many
+  cliper_dt <- merge(
+    cliper_dt,
+    peak_dt,
+    by = peak_col,
+    all.x = TRUE,
+    all.y = FALSE,
+    sort = FALSE
+  )
+  
+  target_chr <- as.character(GenomicRanges::seqnames(region_gr))
+  cliper_dt[, peak_chr := fix_chr_style(peak_chr, target_chr)]
+  
+  cliper_dt <- cliper_dt[
+    peak_chr == target_chr &
+      peak_end >= GenomicRanges::start(region_gr) &
+      peak_start <= GenomicRanges::end(region_gr)
+  ]
+  
+  if (nrow(cliper_dt) == 0) {
+    stop("No CLIPER peaks overlap the requested plotting region.")
+  }
+  
+  cliper_dt[, peak_mid := (peak_start + peak_end) / 2]
+  cliper_dt[, celltype := as.character(get(celltype_col))]
+  cliper_dt[, PPIP_plot := as.numeric(get(ppip_col))]
+  cliper_dt[, Posterior_b_plot := as.numeric(get(beta_col))]
+  
+  cliper_dt
+}
+
+prepare_gwas_track <- function(
+    gwas_finemap,
+    region_gr,
+    chr_col = "Chrom",
+    pos_col = "Position",
+    pip_col = "PIP"
+) {
+  target_chr <- as.character(seqnames(region_gr))
+  
+  if (inherits(gwas_finemap, "GRanges")) {
+    gwas_dt <- as.data.table(as.data.frame(gwas_finemap))
+    gwas_dt[, chr := as.character(seqnames)]
+    gwas_dt[, pos := start]
+  } else {
+    gwas_dt <- as.data.table(gwas_finemap)
+    
+    if (!chr_col %in% colnames(gwas_dt)) {
+      stop("chr_col not found in gwas_finemap: ", chr_col)
+    }
+    if (!pos_col %in% colnames(gwas_dt)) {
+      stop("pos_col not found in gwas_finemap: ", pos_col)
+    }
+    
+    gwas_dt[, chr := as.character(get(chr_col))]
+    gwas_dt[, pos := as.integer(get(pos_col))]
+  }
+  
+  if (!pip_col %in% colnames(gwas_dt)) {
+    stop("pip_col not found in gwas_finemap: ", pip_col)
+  }
+  
+  gwas_dt[, chr := fix_chr_style(chr, target_chr)]
+  gwas_dt[, PIP_plot := as.numeric(get(pip_col))]
+  
+  gwas_dt[
+    chr == target_chr &
+      pos >= start(region_gr) &
+      pos <= end(region_gr) &
+      !is.na(PIP_plot)
+  ]
+}
+
+
+prepare_gene_track <- function(
+    gr_anno,
+    region_gr,
+    target_gene,
+    gene_col = "gene_name",
+    max_genes = 25
+) {
+  if (!inherits(gr_anno, "GRanges")) {
+    stop("gr_anno must be a GRanges.")
+  }
+  
+  if (!gene_col %in% colnames(S4Vectors::mcols(gr_anno))) {
+    stop("gene_col not found in gr_anno: ", gene_col)
+  }
+  
+  target_chr <- as.character(GenomicRanges::seqnames(region_gr))
+  region_start <- GenomicRanges::start(region_gr)
+  region_end <- GenomicRanges::end(region_gr)
+  
+  # Do NOT use as.data.frame(gr_anno), because duplicated names(gr_anno)
+  # can trigger duplicate row.names errors.
+  gene_dt <- data.table(
+    chr = fix_chr_style(as.character(GenomicRanges::seqnames(gr_anno)), target_chr),
+    start = GenomicRanges::start(gr_anno),
+    end = GenomicRanges::end(gr_anno),
+    strand = as.character(GenomicRanges::strand(gr_anno)),
+    gene_name_plot = as.character(S4Vectors::mcols(gr_anno)[[gene_col]])
+  )
+  
+  gene_dt <- gene_dt[
+    !is.na(gene_name_plot) &
+      gene_name_plot != "" &
+      chr == target_chr &
+      end >= region_start &
+      start <= region_end
+  ]
+  
+  if (nrow(gene_dt) == 0L) {
+    warning("No genes found in the plotting region.")
+    return(data.table(
+      gene_name_plot = character(),
+      start = integer(),
+      end = integer(),
+      strand = character(),
+      gene_mid = numeric(),
+      is_target = logical(),
+      y = numeric()
+    ))
+  }
+  
+  gene_track_dt <- gene_dt[
+    ,
+    .(
+      start = min(start, na.rm = TRUE),
+      end = max(end, na.rm = TRUE),
+      strand = {
+        ss <- strand[!is.na(strand) & strand != "*"]
+        if (length(ss) > 0) ss[1] else "*"
+      }
+    ),
+    by = gene_name_plot
+  ]
+  
+  gene_track_dt[, gene_mid := (start + end) / 2]
+  gene_track_dt[, is_target := gene_name_plot == target_gene]
+  
+  if (nrow(gene_track_dt) > max_genes) {
+    region_mid <- (region_start + region_end) / 2
+    
+    gene_track_dt[, dist_to_region_mid := abs(gene_mid - region_mid)]
+    
+    gene_track_dt <- gene_track_dt[
+      order(!is_target, dist_to_region_mid)
+    ][seq_len(min(max_genes, .N))]
+    
+    gene_track_dt[, dist_to_region_mid := NULL]
+  }
+  
+  gene_track_dt[, y := ((seq_len(.N) - 1L) %% 4L) + 1L]
+  
+  gene_track_dt
+}
+
+make_binned_coverage <- function(
+    object,
+    region_gr,
+    celltype_col,
+    assay_atac = "peaks",
+    celltypes = NULL,
+    bin_size = 100
+) {
+  meta <- as.data.table(object@meta.data, keep.rownames = "cell")
+  
+  if (!celltype_col %in% colnames(meta)) {
+    stop("celltype_col not found in object metadata: ", celltype_col)
+  }
+  
+  if (!assay_atac %in% names(object@assays)) {
+    stop(
+      "assay_atac not found: ", assay_atac,
+      ". Available assays: ", paste(names(object@assays), collapse = ", ")
+    )
+  }
+  
+  meta[, celltype := as.character(get(celltype_col))]
+  meta <- meta[!is.na(celltype)]
+  
+  if (is.null(celltypes)) {
+    celltypes <- unique(meta$celltype)
+  }
+  
+  celltypes <- as.character(celltypes)
+  meta <- meta[celltype %in% celltypes]
+  celltypes <- celltypes[celltypes %in% unique(meta$celltype)]
+  
+  if (length(celltypes) == 0L) {
+    stop("No selected celltypes are present in object metadata.")
+  }
+  
+  target_chr <- as.character(GenomicRanges::seqnames(region_gr))
+  region_start <- GenomicRanges::start(region_gr)
+  region_end <- GenomicRanges::end(region_gr)
+  
+  starts <- seq(region_start, region_end, by = bin_size)
+  ends <- pmin(starts + bin_size - 1L, region_end)
+  
+  bins <- GenomicRanges::GRanges(
+    seqnames = target_chr,
+    ranges = IRanges::IRanges(start = starts, end = ends)
+  )
+  
+  names(bins) <- paste0("bin_", seq_along(bins))
+  
+  fragments <- Signac::Fragments(object[[assay_atac]])
+  
+  if (length(fragments) == 0L) {
+    stop("No fragments found in object[[", assay_atac, "]].")
+  }
+  
+  cells_use <- intersect(meta$cell, colnames(object))
+  
+  if (length(cells_use) == 0L) {
+    stop("No cells overlap between metadata and object colnames.")
+  }
+  
+  mat <- Signac::FeatureMatrix(
+    fragments = fragments,
+    features = bins,
+    cells = cells_use
+  )
+  
+  # Critical fix: FeatureMatrix may not preserve names(bins)
+  if (nrow(mat) != length(bins)) {
+    stop("FeatureMatrix returned a different number of rows than bins.")
+  }
+  
+  rownames(mat) <- names(bins)
+  
+  meta_use <- meta[match(colnames(mat), cell), .(cell, celltype)]
+  keep <- !is.na(meta_use$celltype)
+  
+  mat <- mat[, keep, drop = FALSE]
+  meta_use <- meta_use[keep]
+  
+  group <- factor(meta_use$celltype, levels = celltypes)
+  
+  keep2 <- !is.na(group)
+  mat <- mat[, keep2, drop = FALSE]
+  group <- group[keep2]
+  
+  if (ncol(mat) == 0L) {
+    stop("No cells remain after matching cell type labels.")
+  }
+  
+  group_mat <- Matrix::sparseMatrix(
+    i = seq_along(group),
+    j = as.integer(group),
+    x = 1,
+    dims = c(length(group), length(celltypes)),
+    dimnames = list(colnames(mat), celltypes)
+  )
+  
+  cov_by_ct <- mat %*% group_mat
+  
+  n_by_ct <- as.numeric(tabulate(as.integer(group), nbins = length(celltypes)))
+  names(n_by_ct) <- celltypes
+  
+  cov_by_ct <- sweep(
+    as.matrix(cov_by_ct),
+    2,
+    pmax(n_by_ct, 1),
+    "/"
+  )
+  
+  rownames(cov_by_ct) <- names(bins)
+  
+  cov_dt <- as.data.table(as.table(cov_by_ct))
+  setnames(cov_dt, c("bin", "celltype", "coverage"))
+  
+  cov_dt[, bin := as.character(bin)]
+  cov_dt[, celltype := as.character(celltype)]
+  cov_dt[, coverage := as.numeric(coverage)]
+  
+  bin_dt <- data.table(
+    bin = names(bins),
+    x = (GenomicRanges::start(bins) + GenomicRanges::end(bins)) / 2,
+    bin_start = GenomicRanges::start(bins),
+    bin_end = GenomicRanges::end(bins)
+  )
+  
+  cov_dt <- merge(cov_dt, bin_dt, by = "bin", all.x = TRUE, sort = FALSE)
+  
+  if (any(is.na(cov_dt$x))) {
+    stop("Coverage bins failed to merge with bin coordinates. This should not happen after rownames(mat) <- names(bins).")
+  }
+  
+  cov_dt[, coverage_scaled := {
+    mx <- max(coverage, na.rm = TRUE)
+    if (is.finite(mx) && mx > 0) coverage / mx else rep(0, .N)
+  }, by = celltype]
+  
+  cov_dt[, coverage_scaled := as.numeric(coverage_scaled)]
+  cov_dt[!is.finite(coverage_scaled), coverage_scaled := 0]
+  
+  cov_dt
+}
+
+get_c4a_colors <- function(
+    palette,
+    n,
+    type = "cat",
+    reverse = FALSE
+) {
+  if (!requireNamespace("cols4all", quietly = TRUE)) {
+    stop("Package 'cols4all' is required. Please install it with install.packages('cols4all').")
+  }
+  
+  cols <- tryCatch(
+    cols4all::c4a(
+      palette = palette,
+      n = n,
+      type = type,
+      reverse = reverse
+    ),
+    error = function(e1) {
+      tryCatch(
+        cols4all::c4a(
+          palette,
+          n = n,
+          type = type,
+          reverse = reverse
+        ),
+        error = function(e2) {
+          stop(
+            "Failed to get colors from cols4all palette: ",
+            palette,
+            "\nOriginal error: ",
+            conditionMessage(e2)
+          )
+        }
+      )
+    }
+  )
+  
+  as.character(cols)
+}
+
+
+get_c4a_celltype_colors <- function(
+    celltypes,
+    palette = "carto.safe",
+    reverse = FALSE
+) {
+  celltypes <- as.character(celltypes)
+  
+  cols <- get_c4a_colors(
+    palette = palette,
+    n = length(celltypes),
+    type = "cat",
+    reverse = reverse
+  )
+  
+  setNames(cols, celltypes)
+}
+
+make_one_celltype_block <- function(
+    ct,
+    cov_dt,
+    cliper_plot_dt,
+    region_start,
+    region_end,
+    ct_color,
+    beta_cols,
+    beta_limits,
+    show_x = FALSE,
+    show_legend = FALSE,
+    show_peak_labels = FALSE,
+    highlighted_peak_regions = NULL,
+    coverage_alpha = 0.45,
+    ppip_point_size = 2.0,
+    highlight_peak_band_width = NULL,
+    highlight_peak_fill = "#9ECAE1",
+    highlight_alpha = 0.35,
+    plot_base_size = 12,
+    celltype_label_size = 12,
+    axis_linewidth = 0.45
+) {
+  ct <- as.character(ct)
+  
+  cov_sub <- cov_dt[as.character(celltype) == ct]
+  ppip_sub <- cliper_plot_dt[as.character(celltype) == ct]
+  ppip_high <- ppip_sub[highlight_peak %in% TRUE]
+  peak_high_regions <- unique(ppip_high[, .(
+    peak_mid,
+    Peak
+  )])
+  if (nrow(peak_high_regions) > 0L) {
+    peak_high_regions[, xmin := pmax(region_start, peak_mid - highlight_peak_band_width / 2)]
+    peak_high_regions[, xmax := pmin(region_end, peak_mid + highlight_peak_band_width / 2)]
+  } else {
+    peak_high_regions[, xmin := numeric()]
+    peak_high_regions[, xmax := numeric()]
+  }
+  coverage_high_regions <- if (show_peak_labels && !is.null(highlighted_peak_regions)) {
+    highlighted_peak_regions
+  } else {
+    peak_high_regions
+  }
+  if (nrow(coverage_high_regions) > 0L) {
+    coverage_high_regions[, label_x := pmin(pmax(peak_mid, region_start), region_end)]
+  } else {
+    coverage_high_regions[, label_x := numeric()]
+  }
+  
+  common_theme <- theme_classic(base_size = plot_base_size) +
+    theme(
+      panel.grid = element_blank(),
+      plot.margin = margin(1.5, 2, 1.5, 2),
+      axis.title.x = element_blank(),
+      axis.line.x = element_blank(),
+      axis.ticks.x = if (show_x) element_line(linewidth = axis_linewidth) else element_blank(),
+      axis.text.x = if (show_x) element_text(size = plot_base_size - 1) else element_blank(),
+      axis.text.y = element_text(size = plot_base_size - 2),
+      axis.ticks.y = element_line(linewidth = axis_linewidth),
+      axis.line.y = element_line(linewidth = axis_linewidth)
+    )
+  
+  p_cov_ct <- ggplot(cov_sub, aes(x = x, y = coverage_scaled)) +
+    geom_rect(
+      data = coverage_high_regions,
+      aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+      inherit.aes = FALSE,
+      fill = highlight_peak_fill,
+      alpha = highlight_alpha,
+      color = NA
+    ) +
+    geom_area(
+      fill = ct_color,
+      alpha = coverage_alpha,
+      linewidth = 0
+    ) +
+    geom_line(
+      color = ct_color,
+      linewidth = 0.30,
+      alpha = 0.95
+    ) +
+    geom_text(
+      data = if (show_peak_labels) coverage_high_regions else coverage_high_regions[0],
+      aes(x = label_x, y = 0.98, label = Peak),
+      inherit.aes = FALSE,
+      color = "black",
+      size = max(3.0, plot_base_size * 0.28),
+      fontface = "bold",
+      angle = 0,
+      hjust = 0.5,
+      vjust = 1
+    ) +
+    scale_y_continuous(
+      breaks = c(0, 1),
+      limits = c(0, 1),
+      expand = expansion(mult = c(0, 0.03))
+    ) +
+    coord_cartesian(
+      xlim = c(region_start, region_end),
+      expand = FALSE,
+      clip = "off"
+    ) +
+    labs(
+      x = NULL,
+      y = ct
+    ) +
+    common_theme +
+    theme(
+      plot.margin = margin(1.5, 2, 4, 2),
+      axis.title.y = element_text(
+        angle = 0,
+        hjust = 1,
+        vjust = 0.62,
+        size = celltype_label_size,
+        face = "bold",
+        color = ct_color,
+        margin = margin(r = 11)
+      )
+    )
+  
+  if (nrow(ppip_sub) == 0L) {
+    return(p_cov_ct)
+  }
+  
+  p_ppip_ct <- ggplot(ppip_sub) +
+    geom_rect(
+      data = peak_high_regions,
+      aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+      inherit.aes = FALSE,
+      fill = highlight_peak_fill,
+      alpha = highlight_alpha,
+      color = NA
+    ) +
+    geom_segment(
+      aes(
+        x = peak_start,
+        xend = peak_end,
+        y = 0.02,
+        yend = 0.02
+      ),
+      linewidth = 0.30,
+      alpha = 0.40
+    ) +
+    geom_point(
+      aes(
+        x = peak_mid,
+        y = PPIP_plot,
+        fill = Posterior_b_plot
+      ),
+      shape = 21,
+      color = "black",
+      stroke = 0.30,
+      size = ppip_point_size,
+      alpha = 0.95
+    ) +
+    scale_fill_gradientn(
+      colours = beta_cols,
+      limits = beta_limits,
+      oob = scales::squish,
+      name = "Posterior b",
+      guide = if (show_legend) {
+        guide_colorbar(
+          title.position = "top",
+          order = 3,
+          barheight = unit(44, "pt"),
+          barwidth = unit(6, "pt")
+        )
+      } else {
+        "none"
+      }
+    ) +
+    scale_y_continuous(
+      breaks = c(0, 1),
+      limits = c(-0.05, 1),
+      expand = expansion(mult = c(0, 0.03))
+    ) +
+    coord_cartesian(
+      xlim = c(region_start, region_end),
+      expand = FALSE,
+      clip = "off"
+    ) +
+    labs(
+      x = NULL,
+      y = "CLIPER\nPPIP"
+    ) +
+    common_theme +
+    theme(
+      axis.line.x = element_line(linewidth = axis_linewidth),
+      axis.ticks.x = element_line(linewidth = axis_linewidth),
+      axis.text.x = element_blank(),
+      plot.margin = margin(5, 2, 4, 2),
+      axis.title.y = element_text(
+        angle = 0,
+        hjust = 1,
+        vjust = 0.5,
+        size = plot_base_size - 1,
+        margin = margin(r = 11)
+      )
+    )
+  
+  p_cov_ct / p_ppip_ct +
+    patchwork::plot_layout(heights = c(1.00, 0.67))
+}
+
+
+plot_cliper_p2g <- function(
+    object,
+    cliper_output,
+    gene,
+    gr_anno,
+    gwas_finemap = NULL,
+    region = NULL,
+    flank = 250000,
+    gene_upstream = NULL,
+    gene_downstream = NULL,
+    celltype_col = "celltype",
+    celltypes = NULL,
+    assay_atac = "ATAC",
+    assay_rna = "RNA",
+    gene_anno_col = "gene_name",
+    gwas_chr_col = "Chrom",
+    gwas_pos_col = "Position",
+    gwas_pip_col = "PIP",
+    bin_size = 100,
+    use_cliper = "summary_all",
+    max_genes = 25,
+    c4a_celltype_palette = "carto.safe",
+    c4a_beta_palette = "hcl.blue_red",
+    c4a_celltype_reverse = FALSE,
+    c4a_beta_reverse = FALSE,
+    expression_width = NULL,
+    browser_width = 9.50,
+    coverage_alpha = 0.45,
+    ppip_point_size = 2.0,
+    highlight_peaks = NULL,
+    highlight_snps = NULL,
+    gwas_snp_col = NULL,
+    highlight_peak_band_width = NULL,
+    highlight_peak_fill = "#9ECAE1",
+    highlight_snp_fill = "#E64B35",
+    highlight_alpha = 0.35,
+    dotplot_cols = c("grey90", "#B2182B"),
+    dotplot_dot_scale = 6,
+    dotplot_scale_min = 0,
+    dotplot_scale_max = 100,
+    plot_base_size = 12,
+    celltype_label_size = 12,
+    axis_linewidth = 0.45,
+    return_data = FALSE
+) {
+  if (!requireNamespace("cols4all", quietly = TRUE)) {
+    stop("Package 'cols4all' is required. Please install it with install.packages('cols4all').")
+  }
+  if (!requireNamespace("patchwork", quietly = TRUE)) {
+    stop("Package 'patchwork' is required.")
+  }
+  if (!requireNamespace("Signac", quietly = TRUE)) {
+    stop("Package 'Signac' is required.")
+  }
+  if (!requireNamespace("Seurat", quietly = TRUE)) {
+    stop("Package 'Seurat' is required.")
+  }
+  if (is.null(expression_width)) {
+    expression_width <- browser_width / 5
+  }
+  expression_width <- as.numeric(expression_width)[1]
+  if (!is.finite(expression_width) || expression_width <= 0) {
+    stop("expression_width should be a positive number.")
+  }
+  plot_gwas <- !is.null(gwas_finemap)
+  region_gr <- make_plot_region(
+    region = region,
+    gene = gene,
+    gr_anno = gr_anno,
+    flank = flank,
+    gene_upstream = gene_upstream,
+    gene_downstream = gene_downstream,
+    gene_col = gene_anno_col
+  )
+  
+  target_chr <- as.character(GenomicRanges::seqnames(region_gr))
+  region_start <- GenomicRanges::start(region_gr)
+  region_end <- GenomicRanges::end(region_gr)
+  region_width <- region_end - region_start
+  
+  if (is.null(highlight_peak_band_width)) {
+    highlight_peak_band_width <- max(
+      1,
+      region_width * ppip_point_size / (browser_width * 25.4)
+    )
+  }
+  highlight_peak_band_width <- as.numeric(highlight_peak_band_width)[1]
+  if (!is.finite(highlight_peak_band_width) || highlight_peak_band_width <= 0) {
+    stop("highlight_peak_band_width should be a positive number.")
+  }
+  
+  region_string <- paste0(target_chr, ":", region_start, "-", region_end)
+  
+  cliper_dt <- prepare_cliper_track(
+    cliper_output = cliper_output,
+    gene = gene,
+    region_gr = region_gr,
+    use = use_cliper
+  )
+  
+  meta <- data.table::as.data.table(object@meta.data, keep.rownames = "cell")
+  
+  if (!celltype_col %in% colnames(meta)) {
+    stop("celltype_col not found in object metadata: ", celltype_col)
+  }
+  
+  meta[, celltype := as.character(get(celltype_col))]
+  
+  if (is.null(celltypes)) {
+    celltype_raw <- object@meta.data[[celltype_col]]
+    if (is.factor(celltype_raw)) {
+      celltypes <- levels(celltype_raw)
+      celltypes <- celltypes[celltypes %in% meta[!is.na(celltype), unique(celltype)]]
+    } else {
+      celltypes <- sort(unique(meta[!is.na(celltype), celltype]))
+    }
+  }
+  
+  celltypes <- as.character(celltypes)
+  
+  if (length(celltypes) == 0L) {
+    stop("No cell types found in object metadata.")
+  }
+  
+  cliper_dt <- cliper_dt[celltype %in% celltypes]
+  
+  if (nrow(cliper_dt) == 0L) {
+    stop("No CLIPER rows remain after filtering to selected celltypes.")
+  }
+  
+  cliper_dt[, celltype := factor(as.character(celltype), levels = celltypes)]
+  
+  cov_dt <- make_binned_coverage(
+    object = object,
+    region_gr = region_gr,
+    celltype_col = celltype_col,
+    assay_atac = assay_atac,
+    celltypes = celltypes,
+    bin_size = bin_size
+  )
+  
+  cov_dt[, celltype := factor(as.character(celltype), levels = celltypes)]
+  
+  gwas_dt <- NULL
+  if (plot_gwas) {
+    gwas_dt <- prepare_gwas_track(
+      gwas_finemap = gwas_finemap,
+      region_gr = region_gr,
+      chr_col = gwas_chr_col,
+      pos_col = gwas_pos_col,
+      pip_col = gwas_pip_col
+    )
+  }
+  
+  gene_track_dt <- prepare_gene_track(
+    gr_anno = gr_anno,
+    region_gr = region_gr,
+    target_gene = gene,
+    gene_col = gene_anno_col,
+    max_genes = max_genes
+  )
+  
+  cliper_plot_dt <- cliper_dt[
+    !is.na(PPIP_plot) &
+      !is.na(Posterior_b_plot)
+  ]
+  
+  if (nrow(cliper_plot_dt) == 0L) {
+    stop("No non-missing CLIPER PPIP / Posterior_b values to plot.")
+  }
+  
+  highlight_peaks <- unique(as.character(highlight_peaks))
+  highlight_peaks <- highlight_peaks[!is.na(highlight_peaks) & highlight_peaks != ""]
+  cliper_plot_dt[, peak_coord := paste0(peak_chr, ":", peak_start, "-", peak_end)]
+  cliper_plot_dt[, peak_coord_nochr := paste0(sub("^chr", "", peak_chr), ":", peak_start, "-", peak_end)]
+  cliper_plot_dt[, highlight_peak := FALSE]
+  if (length(highlight_peaks) > 0L) {
+    cliper_plot_dt[
+      as.character(Peak) %in% highlight_peaks |
+        peak_coord %in% highlight_peaks |
+        peak_coord_nochr %in% highlight_peaks,
+      highlight_peak := TRUE
+    ]
+  }
+  
+  if (plot_gwas) {
+    highlight_snps <- unique(as.character(highlight_snps))
+    highlight_snps <- highlight_snps[!is.na(highlight_snps) & highlight_snps != ""]
+    gwas_dt[, snp_coord := paste0(chr, ":", pos)]
+    gwas_dt[, snp_coord_nochr := paste0(sub("^chr", "", chr), ":", pos)]
+    gwas_dt[, highlight_snp := FALSE]
+    if (length(highlight_snps) > 0L) {
+      snp_cols <- if (!is.null(gwas_snp_col)) {
+        if (!gwas_snp_col %in% colnames(gwas_dt)) {
+          stop("gwas_snp_col not found in gwas_finemap: ", gwas_snp_col)
+        }
+        gwas_snp_col
+      } else {
+        intersect(
+          c("SNP", "snp", "rsid", "RSID", "rsID", "Name", "name", "Index", "index",
+            "variant_id", "Variant", "MarkerName", "ID", "id"),
+          colnames(gwas_dt)
+        )
+      }
+      
+      gwas_dt[
+        snp_coord %in% highlight_snps |
+          snp_coord_nochr %in% highlight_snps |
+          as.character(pos) %in% highlight_snps,
+        highlight_snp := TRUE
+      ]
+      
+      if (length(snp_cols) > 0L) {
+        gwas_dt[
+          Reduce(
+            `|`,
+            lapply(snp_cols, function(cc) as.character(get(cc)) %in% highlight_snps)
+          ),
+          highlight_snp := TRUE
+        ]
+      }
+    }
+    
+    snp_label_cols <- if (!is.null(gwas_snp_col) && gwas_snp_col %in% colnames(gwas_dt)) {
+      gwas_snp_col
+    } else {
+      intersect(
+        c("SNP", "snp", "rsid", "RSID", "rsID", "Name", "name", "Index", "index",
+          "variant_id", "Variant", "MarkerName", "ID", "id"),
+        colnames(gwas_dt)
+      )
+    }
+    gwas_dt[, highlight_snp_label := fifelse(
+      highlight_snp %in% TRUE,
+      if (length(snp_label_cols) > 0L) as.character(get(snp_label_cols[1])) else snp_coord,
+      NA_character_
+    )]
+  }
+  
+  ct_cols <- get_c4a_celltype_colors(
+    celltypes = celltypes,
+    palette = c4a_celltype_palette,
+    reverse = c4a_celltype_reverse
+  )
+  
+  beta_cols <- get_c4a_colors(
+    palette = c4a_beta_palette,
+    n = 11,
+    type = "div",
+    reverse = c4a_beta_reverse
+  )
+  
+  beta_abs <- max(abs(cliper_plot_dt$Posterior_b_plot), na.rm = TRUE)
+  if (!is.finite(beta_abs) || beta_abs == 0) {
+    beta_abs <- 1
+  }
+  beta_limits <- c(-beta_abs, beta_abs)
+  ppip_legend_i <- match(
+    TRUE,
+    celltypes %in% unique(as.character(cliper_plot_dt$celltype))
+  )
+  celltypes_with_ppip <- unique(as.character(cliper_plot_dt$celltype))
+  n_celltypes_with_ppip <- sum(celltypes %in% celltypes_with_ppip)
+  browser_height <- max(4.5, (length(celltypes) + 0.67 * n_celltypes_with_ppip) * 0.70)
+  highlighted_peak_regions <- unique(cliper_plot_dt[
+    highlight_peak %in% TRUE,
+    .(
+      peak_mid,
+      Peak
+    )
+  ])
+  if (nrow(highlighted_peak_regions) > 0L) {
+    highlighted_peak_regions[, xmin := pmax(region_start, peak_mid - highlight_peak_band_width / 2)]
+    highlighted_peak_regions[, xmax := pmin(region_end, peak_mid + highlight_peak_band_width / 2)]
+  } else {
+    highlighted_peak_regions[, xmin := numeric()]
+    highlighted_peak_regions[, xmax := numeric()]
+  }
+  
+  object_expr <- object
+  
+  cells_expr <- rownames(object_expr@meta.data)[
+    as.character(object_expr@meta.data[[celltype_col]]) %in% celltypes
+  ]
+  
+  if (length(cells_expr) == 0L) {
+    stop("No cells remain for expression plot after filtering to selected celltypes.")
+  }
+  
+  object_expr <- subset(object_expr, cells = cells_expr)
+  
+  object_expr@meta.data[[celltype_col]] <- factor(
+    as.character(object_expr@meta.data[[celltype_col]]),
+    levels = celltypes
+  )
+  
+  object_expr@meta.data[[celltype_col]] <- droplevels(
+    object_expr@meta.data[[celltype_col]]
+  )
+  
+  Seurat::DefaultAssay(object_expr) <- assay_rna
+  
+  p_expr <- Seurat::DotPlot(
+    object = object_expr,
+    features = gene,
+    group.by = celltype_col,
+    assay = assay_rna,
+    cols = dotplot_cols,
+    dot.scale = dotplot_dot_scale,
+    scale.min = dotplot_scale_min,
+    scale.max = dotplot_scale_max
+  ) +
+    ggplot2::scale_y_discrete(limits = rev(celltypes)) +
+    ggplot2::labs(
+      title = paste0(gene, "\nGene expression"),
+      x = NULL,
+      y = NULL
+    ) +
+    ggplot2::guides(
+      color = ggplot2::guide_colorbar(order = 1),
+      colour = ggplot2::guide_colorbar(order = 1),
+      size = ggplot2::guide_legend(order = 2)
+    ) +
+    ggplot2::theme_classic(base_size = plot_base_size) +
+    ggplot2::theme(
+      legend.position = "right",
+      plot.title = ggplot2::element_text(size = plot_base_size, face = "bold", hjust = 0.5),
+      axis.title = ggplot2::element_blank(),
+      axis.text.x = ggplot2::element_blank(),
+      axis.text.y = ggplot2::element_blank(),
+      axis.ticks.x = ggplot2::element_blank(),
+      axis.ticks.y = ggplot2::element_blank(),
+      axis.line.x = ggplot2::element_blank(),
+      axis.line.y = ggplot2::element_blank(),
+      panel.grid = ggplot2::element_blank(),
+      strip.background = ggplot2::element_blank(),
+      plot.margin = ggplot2::margin(2, 2, 2, 2)
+    )
+  
+  ct_blocks <- lapply(seq_along(celltypes), function(i) {
+    ct <- as.character(celltypes[i])
+    
+    make_one_celltype_block(
+      ct = ct,
+      cov_dt = cov_dt,
+      cliper_plot_dt = cliper_plot_dt,
+      region_start = region_start,
+      region_end = region_end,
+      ct_color = unname(ct_cols[ct]),
+      beta_cols = beta_cols,
+      beta_limits = beta_limits,
+      show_x = FALSE,
+      show_legend = i == ppip_legend_i,
+      show_peak_labels = i == 1,
+      highlighted_peak_regions = highlighted_peak_regions,
+      coverage_alpha = coverage_alpha,
+      ppip_point_size = ppip_point_size,
+      highlight_peak_band_width = highlight_peak_band_width,
+      highlight_peak_fill = highlight_peak_fill,
+      highlight_alpha = highlight_alpha,
+      plot_base_size = plot_base_size,
+      celltype_label_size = celltype_label_size,
+      axis_linewidth = axis_linewidth
+    )
+  })
+  
+  p_browser <- patchwork::wrap_plots(
+    ct_blocks,
+    ncol = 1
+  ) +
+    patchwork::plot_layout(
+      heights = ifelse(celltypes %in% celltypes_with_ppip, 1.67, 1.00)
+    )
+  
+  peak_region_dt <- unique(cliper_plot_dt[, .(
+    peak_start,
+    peak_end,
+    peak_mid,
+    highlight_peak
+  )])
+  peak_region_dt[, y := 1]
+  
+  p_peaks <- ggplot2::ggplot(peak_region_dt) +
+    ggplot2::geom_rect(
+      data = unique(peak_region_dt[highlight_peak %in% TRUE, .(xmin = peak_start, xmax = peak_end)]),
+      ggplot2::aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+      inherit.aes = FALSE,
+      fill = highlight_peak_fill,
+      alpha = highlight_alpha,
+      color = NA
+    ) +
+    ggplot2::geom_segment(
+      ggplot2::aes(
+        x = peak_start,
+        xend = peak_end,
+        y = y,
+        yend = y,
+        linewidth = highlight_peak
+      ),
+      color = "#5A5A5A",
+      lineend = "round"
+    ) +
+    ggplot2::scale_linewidth_manual(values = c(`FALSE` = 0.55, `TRUE` = 1.1), guide = "none") +
+    ggplot2::coord_cartesian(
+      xlim = c(region_start, region_end),
+      ylim = c(0.75, 1.25),
+      expand = FALSE,
+      clip = "off"
+    ) +
+    ggplot2::labs(x = NULL, y = "Peaks\nRegion") +
+    ggplot2::theme_classic(base_size = plot_base_size) +
+    ggplot2::theme(
+      panel.grid = ggplot2::element_blank(),
+      axis.text.x = ggplot2::element_blank(),
+      axis.ticks.x = ggplot2::element_blank(),
+      axis.text.y = ggplot2::element_blank(),
+      axis.ticks.y = ggplot2::element_blank(),
+      axis.line = ggplot2::element_blank(),
+      axis.title.y = ggplot2::element_text(
+        angle = 0,
+        hjust = 1,
+        vjust = 0.5,
+        size = plot_base_size - 1,
+        margin = ggplot2::margin(r = 7)
+      ),
+      plot.margin = ggplot2::margin(1, 2, 1, 2)
+    )
+  
+  if (plot_gwas) {
+    p_gwas <- ggplot2::ggplot(gwas_dt, ggplot2::aes(x = pos, y = PIP_plot)) +
+      ggplot2::geom_segment(
+        ggplot2::aes(xend = pos, y = 0, yend = PIP_plot),
+        alpha = 0.45,
+        linewidth = 0.35
+      ) +
+      ggplot2::geom_point(
+        shape = 21,
+        fill = "white",
+        color = "black",
+        stroke = 0.25,
+        size = 1.85,
+        alpha = 0.90
+      ) +
+      ggplot2::geom_point(
+        data = gwas_dt[highlight_snp %in% TRUE],
+        ggplot2::aes(x = pos, y = PIP_plot),
+        inherit.aes = FALSE,
+        shape = 21,
+        fill = highlight_snp_fill,
+        color = "#B2182B",
+        stroke = 0.55,
+        size = 2.8,
+        alpha = 1
+      ) +
+      ggplot2::geom_text(
+        data = gwas_dt[highlight_snp %in% TRUE],
+        ggplot2::aes(
+          x = pos,
+          y = PIP_plot,
+          label = highlight_snp_label
+        ),
+        inherit.aes = FALSE,
+        color = "#B2182B",
+        size = max(3.0, plot_base_size * 0.28),
+        fontface = "bold",
+        nudge_y = max(1, gwas_dt$PIP_plot, na.rm = TRUE) * 0.06,
+        angle = 0,
+        hjust = 0.5,
+        vjust = 0
+      ) +
+      ggplot2::coord_cartesian(
+        xlim = c(region_start, region_end),
+        ylim = c(0, max(1, gwas_dt$PIP_plot, na.rm = TRUE) * 1.15),
+        expand = FALSE,
+        clip = "off"
+      ) +
+      ggplot2::labs(
+        x = NULL,
+        y = "GWAS\nPIP"
+      ) +
+      ggplot2::theme_classic(base_size = plot_base_size) +
+      ggplot2::theme(
+        panel.grid = ggplot2::element_blank(),
+        axis.text.x = ggplot2::element_blank(),
+        axis.ticks.x = ggplot2::element_blank(),
+        axis.title.y = ggplot2::element_text(
+          angle = 0,
+          hjust = 1,
+          vjust = 0.5,
+          size = plot_base_size - 1,
+          margin = ggplot2::margin(r = 7)
+        ),
+        axis.text.y = ggplot2::element_text(size = plot_base_size - 2),
+        axis.ticks.y = ggplot2::element_line(linewidth = axis_linewidth),
+        axis.line.y = ggplot2::element_line(linewidth = axis_linewidth),
+        axis.line.x = ggplot2::element_blank(),
+        plot.margin = ggplot2::margin(2, 2, 2, 2)
+      )
+  }
+  
+  p_gene <- ggplot2::ggplot(gene_track_dt) +
+    ggplot2::geom_segment(
+      data = gene_track_dt[strand != "-"],
+      ggplot2::aes(
+        x = start,
+        xend = end,
+        y = y,
+        yend = y,
+        linewidth = is_target,
+        color = is_target
+      ),
+      arrow = ggplot2::arrow(
+        length = grid::unit(0.055, "inches"),
+        ends = "last",
+        type = "closed"
+      ),
+      lineend = "round"
+    ) +
+    ggplot2::geom_segment(
+      data = gene_track_dt[strand == "-"],
+      ggplot2::aes(
+        x = start,
+        xend = end,
+        y = y,
+        yend = y,
+        linewidth = is_target,
+        color = is_target
+      ),
+      arrow = ggplot2::arrow(
+        length = grid::unit(0.055, "inches"),
+        ends = "first",
+        type = "closed"
+      ),
+      lineend = "round"
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(
+        x = gene_mid,
+        y = y + 0.22,
+        label = gene_name_plot,
+        fontface = ifelse(is_target, "bold", "plain"),
+        color = is_target
+      ),
+      size = max(3.1, plot_base_size * 0.32)
+    ) +
+    ggplot2::scale_linewidth_manual(
+      values = c(`FALSE` = 0.45, `TRUE` = 1.05),
+      guide = "none"
+    ) +
+    ggplot2::scale_color_manual(
+      values = c(`FALSE` = "#5F6B7A", `TRUE` = "#B2182B"),
+      guide = "none"
+    ) +
+    ggplot2::coord_cartesian(
+      xlim = c(region_start, region_end),
+      expand = FALSE,
+      clip = "off"
+    ) +
+    ggplot2::labs(
+      x = paste0(target_chr, " position"),
+      y = NULL
+    ) +
+    ggplot2::theme_classic(base_size = plot_base_size) +
+    ggplot2::theme(
+      axis.text.y = ggplot2::element_blank(),
+      axis.ticks.y = ggplot2::element_blank(),
+      axis.line.y = ggplot2::element_blank(),
+      axis.text.x = ggplot2::element_text(size = plot_base_size - 1),
+      axis.ticks.x = ggplot2::element_line(linewidth = axis_linewidth),
+      axis.line.x = ggplot2::element_line(linewidth = axis_linewidth),
+      panel.grid = ggplot2::element_blank(),
+      plot.margin = ggplot2::margin(2, 2, 2, 2)
+    )
+  
+  p_top <- (p_browser | p_expr) +
+    patchwork::plot_layout(widths = c(browser_width, expression_width))
+  p_peaks_row <- (p_peaks | patchwork::plot_spacer()) +
+    patchwork::plot_layout(widths = c(browser_width, expression_width))
+  p_gene_row <- (p_gene | patchwork::plot_spacer()) +
+    patchwork::plot_layout(widths = c(browser_width, expression_width))
+  
+  if (plot_gwas) {
+    p_gwas_row <- (p_gwas | patchwork::plot_spacer()) +
+      patchwork::plot_layout(widths = c(browser_width, expression_width))
+    final_plot <- p_top /
+      p_peaks_row /
+      p_gwas_row /
+      p_gene_row +
+      patchwork::plot_layout(
+        heights = c(
+          browser_height,
+          0.28,
+          0.95,
+          0.80
+        ),
+        guides = "collect"
+      )
+  } else {
+    final_plot <- p_top /
+      p_peaks_row /
+      p_gene_row +
+      patchwork::plot_layout(
+        heights = c(
+          browser_height,
+          0.28,
+          0.80
+        ),
+        guides = "collect"
+      )
+  }
+  
+  final_plot <- final_plot +
+    patchwork::plot_annotation(
+      title = paste0(gene, " CLIPER peak-to-gene fine-mapping"),
+      subtitle = region_string
+    ) &
+    ggplot2::theme(
+      legend.position = "right",
+      plot.title = ggplot2::element_text(face = "bold", size = 12),
+      plot.subtitle = ggplot2::element_text(size = 9)
+    )
+  
+  if (return_data) {
+    return(list(
+      plot = final_plot,
+      region = region_gr,
+      cliper = cliper_dt,
+      cliper_plot_dt = cliper_plot_dt,
+      coverage = cov_dt,
+      gwas = gwas_dt,
+      peaks = peak_region_dt,
+      genes = gene_track_dt,
+      celltype_colors = ct_cols,
+      beta_colors = beta_cols
+    ))
+  }
+  
+  final_plot
 }
