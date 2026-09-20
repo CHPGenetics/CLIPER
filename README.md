@@ -7,26 +7,31 @@ CLIPER is a Bayesian framework for **peak-to-gene fine-mapping** in single-cell 
 <p align="center">
   <img src="figures/workflow.png" alt="CLIPER workflow" width="700">
 </p>
-
 ## How CLIPER works
 
-For each gene and cell type, CLIPER relates normalized gene expression to nearby peak accessibility across metacells:
+For each target gene and cell type, CLIPER jointly models normalized gene expression and the accessibility of candidate cis-regulatory peaks across metacells. Let $\mathbf{y}\in\mathbb{R}^{n}$ denote the centered expression vector across $n$ metacells, and let $\mathbf{X}=(\mathbf{x}_1,\ldots,\mathbf{x}_p)\in\mathbb{R}^{n\times p}$ denote the accessibility matrix for $p$ retained candidate peaks. Accessibility columns are centered and, by default, standardized to unit standard deviation.
+
+Each peak $i$ is assigned to one of $K$ latent regulatory modules through a one-hot indicator vector $\mathbf{m}_i=(m_{i1},\ldots,m_{iK})^{\mathsf T}$, where $m_{ik}\in\{0,1\}$ and $\sum_{k=1}^{K}m_{ik}=1$. Let $\mathbf{b}=(b_1,\ldots,b_K)^{\mathsf T}$ be the vector of module-level effects. The first module is the **non-effect module**, with $b_1=0$; modules $2,\ldots,K$ have effects that can be positive or negative. The regression model is
 
 $$
-\mathbf{y} = \mathbf{X}\boldsymbol{\beta} + \boldsymbol{\varepsilon},
-\qquad \beta_i = b_{z_i},
-\qquad \boldsymbol{\varepsilon} \sim N(\mathbf{0},\sigma^2\mathbf{I}).
+y_j=\sum_{i=1}^{p}x_{ji}\mathbf{m}_i^{\mathsf T}\mathbf{b}+\varepsilon_j,
+\qquad \varepsilon_j\overset{\mathrm{i.i.d.}}{\sim}N(0,\sigma^2),
+\qquad j=1,\ldots,n,
 $$
 
-Here, $\mathbf{y}$ is the centered expression vector, $\mathbf{X}$ contains centered peak accessibility values (standardized by default), and $z_i$ assigns peak $i$ to one of up to $K$ latent modules. Peaks in the same module share an effect $b_k$. Module 1 is the **non-effect module**, with $b_1=0$; the remaining modules can have positive or negative effects. This reduces the number of distinct effect parameters while jointly accounting for other candidate peaks.
+where $x_{ji}$ is the accessibility of peak $i$ in metacell $j$, and $\sigma^2$ is the residual variance. Peaks assigned to the same module share a common effect, reducing the number of distinct effect parameters while jointly accounting for other candidate peaks. $K$ is an upper bound on the number of occupied modules; the default $K=5$ allows one non-effect module and at most four non-null modules.
 
-A sparse prior favors the non-effect module; `p1` controls its prior mean probability. CLIPER uses a **partially collapsed Gibbs sampler**, integrating out module effects when updating peak assignments. After burn-in, support for each peak is summarized as
+A Dirichlet prior on module-assignment probabilities encourages sparsity, with `p1` specifying the prior mean probability of assignment to the non-effect module. Non-null module effects have Gaussian priors, and the residual variance has an inverse-gamma prior. Posterior inference uses a **partially collapsed Gibbs sampler**, which integrates out non-null module effects when updating peak assignments.
+
+For peak $i$, the peak-level effect and posterior inclusion probability are
 
 $$
-\mathrm{PPIP}_i = 1 - P(z_i=1\mid\mathbf{X},\mathbf{y}).
+\beta_i=\mathbf{m}_i^{\mathsf T}\mathbf{b},
+\qquad
+\mathrm{PPIP}_i=1-P(m_{i1}=1\mid\mathbf{X},\mathbf{y}).
 $$
 
-Higher PPIP indicates stronger posterior support for a nonzero effect under the model. The posterior mean of $\beta_i$ summarizes its direction and magnitude, averaging over uncertainty in module assignments. These links identify candidate regulatory relationships for downstream interpretation and validation.
+CLIPER summarizes post-burn-in draws to report PPIP and the posterior mean and standard deviation of $\beta_i$. Higher PPIP indicates stronger posterior support for a non-null assignment under the model, while the posterior mean effect describes the direction and magnitude of the association, averaging over uncertainty in peak assignments and module effects.
 
 ## Installation
 
@@ -156,9 +161,9 @@ Example output from the brain Multiome dataset:
 | `Beta_q975` | Upper normal-approximation bound: `Posterior_b + 1.96 * Posterior_b_sd`. |
 | `PPIP` | Posterior probability of assignment to any non-null module: `1 - P(Cluster = 1 | data)`, ranging from 0 to 1. |
 
-Despite their names, `Beta_q025` and `Beta_q975` are **normal-approximation interval bounds**, not empirical posterior quantiles in the current implementation. The peak-effect posterior can include a point mass at zero, so these bounds should be interpreted as approximate uncertainty summaries. Effect sizes are on the scale of the modeled data, not fold changes.
+Despite their names, `Beta_q025` and `Beta_q975` are **normal-approximation interval bounds**, not empirical posterior quantiles in the current implementation. The peak-effect posterior can include a point mass at zero, so these bounds should be interpreted as approximate uncertainty summaries. Effect sizes are on the scale of the modeled data.
 
-For each cell type, `summary_all` includes all modeled pairs, whereas `cliper_summary` retains pairs with `Cluster != 1`. **This is not an automatic high-confidence filter.** To apply the manuscript's criteria, use:
+For each cell type, `summary_all` includes all modeled pairs, whereas `cliper_summary` retains pairs with `Cluster != 1`. This is not an automatic high-confidence filter. To apply the manuscript's criteria, use:
 
 ```r
 high_confidence <- subset(
@@ -196,8 +201,5 @@ The Signac object should contain the ATAC fragment information needed for covera
   <img src="figures/KCNJ10_CLIPER_P2G.png" alt="CLIPER example plot" width="700">
 </p>
 
-<p align="center">
-  <img src="" alt="KCNJ10 CLIPER peak-to-gene fine-mapping in brain cell types" width="1000">
-</p>
 
 At the **KCNJ10** locus, the example highlights a high-PPIP positive peak–gene association in astrocytes, alongside accessibility tracks and gene annotations. PPIP point height represents posterior inclusion probability and point color represents the posterior mean effect; the expression dots show scaled average expression by color and the percentage of expressing cells by size.
