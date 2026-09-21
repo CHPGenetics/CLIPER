@@ -7,11 +7,13 @@ CLIPER is a Bayesian framework for **peak-to-gene fine-mapping** in single-cell 
 <p align="center">
   <img src="figures/workflow.png" alt="CLIPER workflow" width="700">
 </p>
+
+
 ## How CLIPER works
 
 For each target gene and cell type, CLIPER jointly models normalized gene expression and the accessibility of candidate cis-regulatory peaks across metacells. Let $\mathbf{y}\in\mathbb{R}^{n}$ denote the centered expression vector across $n$ metacells, and let $\mathbf{X}=(\mathbf{x}_1,\ldots,\mathbf{x}_p)\in\mathbb{R}^{n\times p}$ denote the accessibility matrix for $p$ retained candidate peaks. Accessibility columns are centered and, by default, standardized to unit standard deviation.
 
-Each peak $i$ is assigned to one of $K$ latent regulatory modules through a one-hot indicator vector $\mathbf{m}_i=(m_{i1},\ldots,m_{iK})^{\mathsf T}$, where $m_{ik}\in\{0,1\}$ and $\sum_{k=1}^{K}m_{ik}=1$. Let $\mathbf{b}=(b_1,\ldots,b_K)^{\mathsf T}$ be the vector of module-level effects. The first module is the **non-effect module**, with $b_1=0$; modules $2,\ldots,K$ have effects that can be positive or negative. The regression model is
+Each peak $`i`$ is assigned to one of $`K`$ latent regulatory modules through a one-hot indicator vector $`\mathbf{m}_i=(m_{i1},\ldots,m_{iK})^{\mathsf{T}}`$, where $`m_{ik}\in\{0,1\}`$ and $`\sum_{k=1}^{K}m_{ik}=1`$. Let $\mathbf{b}=(b_1,\ldots,b_K)^{\mathsf T}$ be the vector of module-level effects. The first module is the **non-effect module**, with $b_1=0$; modules $2,\ldots,K$ have effects that can be positive or negative. The regression model is
 
 $$
 y_j=\sum_{i=1}^{p}x_{ji}\mathbf{m}_i^{\mathsf T}\mathbf{b}+\varepsilon_j,
